@@ -35,8 +35,10 @@ Uygulama arka planda şu kuralları çalıştırarak risk analizi yapar:
 * **Rule 5 (Mesai Dışı Beklenmeyen Giriş):** Saat 00:00 ile 06:00 arasında gerçekleşen başarılı girişler (Event ID 4624).
 
 ## 🌟 Bonus Özellikler (Gelişmiş Tehdit Tespiti)
-Hoca yönergesinde istenen ekstra isterler projeye entegre edilmiştir:
-* **Bonus 3 (IOC Analizi):** Bilinen zararlı IP adresleri (Örn: 185.15.15.15) sisteme entegre edilmiştir. Bu IP'lerden gelen bir log tespit edildiğinde sistem anında **☠️ FATAL** riski atamakta ve ekrana kritik güvenlik uyarısı (Pop-up) fırlatmaktadır.
+Hoca yönergesinde istenen ekstra "Zor" isterler projeye başarıyla entegre edilmiştir:
+* **Bonus 1 (.evtx Desteği):** Uygulama `python-evtx` kütüphanesi kullanılarak doğrudan Windows'un şifreli .evtx formatındaki loglarını parse edebilecek şekilde güncellenmiştir.
+* **Bonus 2 (Gerçek Zamanlı İzleme - Live Sync):** Uygulama arka planda dosyayı dinler ve yeni bir kayıt/saldırı eklendiğinde tabloyu kendi kendine günceller.
+* **Bonus 3 (IOC Analizi):** Bilinen zararlı IP adresleri sisteme entegre edilmiştir. Zararlı IP giriş yaptığında sistem **☠️ FATAL** riski atar. Canlı izleme sırasında yeni bir sızma olursa "YENİ SIZMA" uyarısı verir.
 * **Bonus 4 (Olay Korelasyonu):** Bir kullanıcının sırasıyla Başarısız Giriş -> Başarılı Giriş -> Admin Yetkisi alması gibi zincirleme reaksiyonlar izlenerek "Korelasyon (Account Compromise)" tespiti yapılmaktadır.
 
 ## ⚠️ Bilinen Eksiklikler ve Gelecek Geliştirmeler

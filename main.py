@@ -1,7 +1,13 @@
 import sys
+import os
 import csv
 import json
 from collections import Counter 
+import xml.etree.ElementTree as ET
+
+import Evtx.Evtx as evtx
+
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
                                QHBoxLayout, QGridLayout, QWidget, QTableWidget, QTableWidgetItem, 
                                QFileDialog, QLabel, QGroupBox, QMessageBox, QAbstractItemView,
@@ -12,10 +18,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        self.setWindowTitle("WinLogSentinel - Security Log Analyzer (Advanced Edition)")
-        self.resize(1050, 750) 
+        self.setWindowTitle("WinLogSentinel - Security Log Analyzer (Ultimate Edition)")
+        self.resize(1100, 750) 
         
-        # --- PENCEREYİ EKRANIN ORTASINA HİZALAMA KODU ---
         ekran = QApplication.primaryScreen().availableGeometry()
         x = (ekran.width() - self.width()) // 2
         y = (ekran.height() - self.height()) // 2
@@ -25,7 +30,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # 1. DASHBOARD PANELİ
         self.dashboard_group = QGroupBox("📊 Güvenlik Dashboard")
         dashboard_layout = QGridLayout() 
 
@@ -58,13 +62,18 @@ class MainWindow(QMainWindow):
         self.dashboard_group.setLayout(dashboard_layout)
         main_layout.addWidget(self.dashboard_group) 
 
-        # 2. BUTONLAR
         button_layout = QHBoxLayout()
         
-        self.btn_load_log = QPushButton("📁 Log Dosyası Yükle ve Analiz Et")
+        self.btn_load_log = QPushButton("📁 Log Dosyası Yükle (.csv / .evtx)")
         self.btn_load_log.setMinimumHeight(40)
         self.btn_load_log.clicked.connect(self.load_log_file)
         button_layout.addWidget(self.btn_load_log)
+        
+        self.btn_live = QPushButton("▶️ Canlı İzlemeyi Başlat (Live Sync)")
+        self.btn_live.setMinimumHeight(40)
+        self.btn_live.clicked.connect(self.toggle_live_sync)
+        self.btn_live.setEnabled(False) 
+        button_layout.addWidget(self.btn_live)
 
         self.btn_export = QPushButton("📥 Analiz Raporunu İndir")
         self.btn_export.setMinimumHeight(40)
@@ -74,7 +83,6 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(button_layout)
 
-        # 3. FİLTRELEME ÇUBUĞU
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(QLabel("Filtrele:"))
         
@@ -97,7 +105,6 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(filter_layout) 
 
-        # 4. TABLO
         self.log_table = QTableWidget()
         self.log_table.setColumnCount(7)
         self.log_table.setHorizontalHeaderLabels(["Saat", "Event ID", "Kullanıcı", "IP Adresi", "Durum", "Risk Seviyesi", "Tespit Nedeni"])
@@ -105,26 +112,106 @@ class MainWindow(QMainWindow):
         
         main_layout.addWidget(self.log_table)
         self.log_table.cellDoubleClicked.connect(self.show_event_details)
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.check_file_update)
+        self.current_file = None
+        self.last_mod_time = 0
+        self.last_log_count = 0 
 
     def load_log_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Log Dosyası Seç", "", "CSV Files (*.csv)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Log Dosyası Seç", "", "Desteklenen Loglar (*.csv *.evtx);;CSV Files (*.csv);;EVTX Files (*.evtx)")
         if file_path:
-            with open(file_path, "r", encoding="utf-8") as file:
-                reader = csv.reader(file)
-                next(reader) 
-                
-                self.log_table.setRowCount(0)
-                logs = list(reader) 
-                self.analyze_and_display(logs)
-                self.btn_export.setEnabled(True)
+            self.current_file = file_path
+            self.last_mod_time = os.path.getmtime(file_path)
+            self.btn_export.setEnabled(True)
+            self.btn_live.setEnabled(True)
+            self.last_log_count = 0 
+            self.process_file(file_path, show_popup=True, is_live_update=False)
 
-    def analyze_and_display(self, logs):
+    def process_file(self, file_path, show_popup=False, is_live_update=False):
+        logs = []
+        try:
+            if file_path.endswith('.csv'):
+                with open(file_path, "r", encoding="utf-8") as file:
+                    reader = csv.reader(file)
+                    next(reader, None) 
+                    logs = list(reader)
+            elif file_path.endswith('.evtx'):
+                logs = self.parse_evtx(file_path)
+            
+            self.log_table.setRowCount(0)
+            self.analyze_and_display(logs, show_popup, is_live_update)
+            self.last_log_count = len(logs) 
+        except Exception as e:
+            QMessageBox.warning(self, "Okuma Hatası", f"Dosya işlenirken hata oluştu:\n{e}")
+
+    def parse_evtx(self, file_path):
+        logs = []
+        ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
+        try:
+            with evtx.Evtx(file_path) as evtx_file:
+                for record in evtx_file.records():
+                    root = ET.fromstring(record.xml())
+                    system = root.find(f'{ns}System')
+                    event_data = root.find(f'{ns}EventData')
+                    
+                    if system is None: continue
+                    
+                    event_id_elem = system.find(f'{ns}EventID')
+                    event_id = event_id_elem.text if event_id_elem is not None else ""
+                    
+                    time_elem = system.find(f'{ns}TimeCreated')
+                    saat = ""
+                    if time_elem is not None:
+                        raw_time = time_elem.get('SystemTime', '')
+                        if "T" in raw_time:
+                            saat = raw_time.split("T")[1].split(".")[0][:5] 
+                    
+                    kullanici, ip, durum = "System", "-", "Bilgi"
+                    
+                    if event_data is not None:
+                        for data in event_data.findall(f'{ns}Data'):
+                            name = data.get('Name')
+                            val = data.text or ""
+                            if name in ['TargetUserName', 'SubjectUserName'] and val and val != "SYSTEM":
+                                kullanici = val
+                            elif name == 'IpAddress' and val and val != "-":
+                                ip = val
+                            elif name == 'NewProcessName':
+                                durum = val.split("\\")[-1] 
+                    
+                    logs.append([saat, event_id, kullanici, ip, durum])
+        except Exception as e:
+            print(f"EVTX ayrıştırma hatası: {e}")
+        return logs
+
+    def toggle_live_sync(self):
+        if self.timer.isActive():
+            self.timer.stop()
+            self.btn_live.setText("▶️ Canlı İzlemeyi Başlat (Live Sync)")
+            self.btn_live.setStyleSheet("")
+        else:
+            self.timer.start(2000) 
+            self.btn_live.setText("⏹ Canlı İzleme Aktif (Sistem Dinleniyor...)")
+            self.btn_live.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
+            QMessageBox.information(self, "Live Sync Aktif", "Canlı izleme başlatıldı. Log dosyasına yeni bir kayıt düştüğünde tablo otomatik olarak güncellenecektir.")
+
+    def check_file_update(self):
+        if self.current_file and os.path.exists(self.current_file):
+            current_mod_time = os.path.getmtime(self.current_file)
+            if current_mod_time > self.last_mod_time:
+                self.last_mod_time = current_mod_time
+                self.process_file(self.current_file, show_popup=True, is_live_update=True)
+
+    def analyze_and_display(self, logs, show_popup=True, is_live_update=False):
         failed_attempts_by_ip = {}
         user_event_history = {} 
         
         known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99"] 
         ioc_detected = False
-        ioc_details = [] # GÜNCELLEME: IP ve satır numarasını tutacağımız liste
+        new_ioc_found = False 
+        ioc_details = [] 
         
         total_events = len(logs)
         critical_events = 0
@@ -147,7 +234,6 @@ class MainWindow(QMainWindow):
             risk_skoru = 0
             tespit = "Normal Aktivite"
             
-            # --- TEMEL KURALLAR ---
             if "Administrator" in kullanici and event_id == "4672":
                 risk_skoru += 5
                 tespit = "Kural 3: Şüpheli Yönetici Yetkisi Ataması"
@@ -172,26 +258,31 @@ class MainWindow(QMainWindow):
                 else:
                     tespit = "Kural 2: Başarısız Giriş"
 
-            # --- BONUS 3: IOC KONTROLÜ ---
             if ip in known_malicious_ips:
                 risk_skoru += 50 
                 tespit = "🚨 IOC MATCH DETECTED (Bilinen Zararlı IP)"
                 ioc_detected = True
-                # GÜNCELLEME: Tespit edilen IP'yi satır numarası (row_idx + 1) ile listeye ekliyoruz
-                ioc_details.append(f"IP: {ip}  -->  (Tablo Satırı: {row_idx + 1})")
+                
+                # HTML FORMATLI GÜZEL GÖRÜNÜM KODU
+                if is_live_update:
+                    if row_idx >= self.last_log_count:
+                        ioc_details.append(f"<span style='color:red; font-size:14px;'>🔴 <b>[YENİ SIZMA]</b> IP: {ip} &nbsp;&nbsp;(Satır: {row_idx + 1})</span>")
+                        new_ioc_found = True
+                    else:
+                        ioc_details.append(f"<span style='color:gray;'>⚪ [Önceki Kayıt] IP: {ip} &nbsp;&nbsp;(Satır: {row_idx + 1})</span>")
+                else:
+                    ioc_details.append(f"🔴 IP: {ip} &nbsp;&nbsp;(Satır: {row_idx + 1})")
+                    new_ioc_found = True
 
-            # --- BONUS 4: OLAY KORELASYONU ---
             if event_id == "4672":
                 gecmis = user_event_history[kullanici]
                 if "4625" in gecmis and "4624" in gecmis:
                     risk_skoru += 30
                     tespit = "🚨 Olay Korelasyonu: Possible Account Compromise! (Fail -> Success -> Admin)"
 
-            # Risk Dağılımı ve Renklendirme
             yazi_rengi = QColor(0, 0, 0)
             kalin_yazi = False
             
-            # IOC İÇİN ÖZEL GÖRÜNÜM
             if "IOC MATCH" in tespit:
                 risk_seviyesi = "☠️ FATAL"
                 risk_counts["Fatal"] += 1 
@@ -232,10 +323,8 @@ class MainWindow(QMainWindow):
                 
         self.log_table.resizeColumnsToContents()
 
-        # DASHBOARD GÜNCELLEMESİ
         self.lbl_total.setText(f"Toplam Olay: {total_events}")
         self.lbl_critical.setText(f"🔴 Kritik/Fatal Olay: {critical_events}")
-        
         dist_text = f"📊 Risk: 🟢 {risk_counts['Low']} | 🟡 {risk_counts['Medium']} | 🟠 {risk_counts['High']} | 🔴 {risk_counts['Critical']} | ☠️ {risk_counts['Fatal']}"
         self.lbl_risk_dist.setText(dist_text)
         
@@ -249,20 +338,34 @@ class MainWindow(QMainWindow):
             en_cok_event = Counter(all_event_ids).most_common(1)[0][0]
             self.lbl_top_event_id.setText(f"🆔 En Sık Event ID: {en_cok_event}")
 
-        # --- EKRANA FIRLAYAN AKTİF ALARM (GÜNCELLENDİ) ---
-        if ioc_detected:
-            tehlikeli_kayitlar = "\n".join(ioc_details)
-            mesaj = f"DİKKAT! Log dosyasında bilinen zararlı IP adresleri (IOC) tespit edildi!\n\nBulunan Kayıtlar:\n{tehlikeli_kayitlar}\n\nLütfen tablodaki ilgili satır(lar)ı inceleyin ve derhal ağ bağlantısını kesin."
-            QMessageBox.critical(self, "🚨 KRİTİK GÜVENLİK UYARISI", mesaj)
+        # HTML FORMATLI, ŞIK MESAJ KUTUSU
+        if ioc_detected and show_popup and new_ioc_found:
+            html_kayitlar = "<br>".join(ioc_details)
+            
+            html_mesaj = f"""
+            <h3>DİKKAT! Log dosyasında bilinen zararlı IP adresleri (IOC) tespit edildi!</h3>
+            <b>Bulunan Kayıtlar:</b><br><br>
+            {html_kayitlar}
+            <br><br>
+            <i>Lütfen tablodaki ilgili satırları inceleyin ve derhal ağ bağlantısını kesin.</i>
+            """
+            
+            uyari = QMessageBox(self)
+            uyari.setWindowTitle("🚨 KRİTİK GÜVENLİK UYARISI")
+            uyari.setIcon(QMessageBox.Critical)
+            uyari.setText(html_mesaj)
+            
+            ekran = QApplication.primaryScreen().availableGeometry()
+            x = (ekran.width() - 400) // 2
+            y = (ekran.height() - 200) // 2
+            uyari.move(x, y)
+            
+            uyari.exec()
 
     def apply_filter(self):
         search_text = self.filter_input.text().lower() 
         selected_column = self.filter_column.currentText()
-
-        column_map = {
-            "Saat": 0, "Event ID": 1, "Kullanıcı": 2, "IP Adresi": 3, 
-            "Durum": 4, "Risk Seviyesi": 5, "Tespit Nedeni": 6
-        }
+        column_map = {"Saat": 0, "Event ID": 1, "Kullanıcı": 2, "IP Adresi": 3, "Durum": 4, "Risk Seviyesi": 5, "Tespit Nedeni": 6}
 
         for row in range(self.log_table.rowCount()):
             match = False
@@ -277,7 +380,6 @@ class MainWindow(QMainWindow):
                 item = self.log_table.item(row, col_idx)
                 if item and search_text in item.text().lower():
                     match = True
-
             self.log_table.setRowHidden(row, not match)
 
     def clear_filter(self):
@@ -328,14 +430,22 @@ Event ID:       {event_id}
 💡 Önerilen Aksiyon:
 {onerilen_aksiyon}"""
         
-        QMessageBox.information(self, "Güvenlik Uyarısı Detayı", detay_mesaji)
+        uyari = QMessageBox(self)
+        uyari.setWindowTitle("Güvenlik Uyarısı Detayı")
+        uyari.setIcon(QMessageBox.Information)
+        uyari.setText(detay_mesaji)
+        
+        ekran = QApplication.primaryScreen().availableGeometry()
+        x = (ekran.width() - 400) // 2
+        y = (ekran.height() - 200) // 2
+        uyari.move(x, y)
+        
+        uyari.exec()
 
     def export_report(self):
         formatlar = ["CSV (Excel Uyumlu)", "JSON (Yapılandırılmış Metin)"]
         secim, ok = QInputDialog.getItem(self, "Rapor Formatı Seç", "Lütfen kaydetmek istediğiniz formatı seçin:", formatlar, 0, False)
-        
-        if not ok:
-            return
+        if not ok: return
             
         if "CSV" in secim:
             file_path, _ = QFileDialog.getSaveFileName(self, "CSV Raporunu Kaydet", "Guvenlik_Analiz_Raporu.csv", "CSV Files (*.csv)")
@@ -348,7 +458,6 @@ Event ID:       {event_id}
                         row_data = [self.log_table.item(row, c).text().replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "").replace("☠️ ", "") if self.log_table.item(row, c) else "" for c in range(self.log_table.columnCount())]
                         writer.writerow(row_data)
                 QMessageBox.information(self, "Başarılı", f"CSV Raporu başarıyla kaydedildi:\n{file_path}")
-                
         else:
             file_path, _ = QFileDialog.getSaveFileName(self, "JSON Raporunu Kaydet", "Guvenlik_Analiz_Raporu.json", "JSON Files (*.json)")
             if file_path:
