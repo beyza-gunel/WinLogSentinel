@@ -34,6 +34,11 @@ Uygulama arka planda şu kuralları çalıştırarak risk analizi yapar:
 * **Rule 4 (Şüpheli İşlem - Process):** Command Prompt (`cmd.exe`) gibi potansiyel zararlı script çalıştırabilecek processlerin başlatılması (Event ID 4688).
 * **Rule 5 (Mesai Dışı Beklenmeyen Giriş):** Saat 00:00 ile 06:00 arasında gerçekleşen başarılı girişler (Event ID 4624).
 
+## 🌟 Bonus Özellikler (Gelişmiş Tehdit Tespiti)
+Hoca yönergesinde istenen ekstra isterler projeye entegre edilmiştir:
+* **Bonus 3 (IOC Analizi):** Bilinen zararlı IP adresleri (Örn: 185.15.15.15) sisteme entegre edilmiştir. Bu IP'lerden gelen bir log tespit edildiğinde sistem anında **☠️ FATAL** riski atamakta ve ekrana kritik güvenlik uyarısı (Pop-up) fırlatmaktadır.
+* **Bonus 4 (Olay Korelasyonu):** Bir kullanıcının sırasıyla Başarısız Giriş -> Başarılı Giriş -> Admin Yetkisi alması gibi zincirleme reaksiyonlar izlenerek "Korelasyon (Account Compromise)" tespiti yapılmaktadır.
+
 ## ⚠️ Bilinen Eksiklikler ve Gelecek Geliştirmeler
 * Şu an için sadece yapılandırılmış `.csv` formatındaki logları okumaktadır. Gelecek sürümlerde doğrudan `.evtx` (Windows Event Log) dosyalarını parse edecek bir modül eklenecektir.
 * IOC (Indicator of Compromise) mekanizması için dış IP itibar (Reputation) API'leri ile entegrasyon planlanmaktadır.
