@@ -390,8 +390,51 @@ class MainWindow(QMainWindow):
         durum = self.log_table.item(row, 4).text()
         risk = self.log_table.item(row, 5).text()
         tespit = self.log_table.item(row, 6).text()
-        detay_mesaji = f"🚨 OLAY DETAYI\n----------------\nRisk: {risk}\nKullanıcı: {kullanici}\nIP: {ip}\n\n📋 Tespit: {tespit}"
-        QMessageBox.information(self, "Detay", detay_mesaji)
+
+        onerilen_aksiyon = "Normal bir aktivite, özel bir işleme gerek yoktur."
+        if "IOC MATCH" in tespit:
+            onerilen_aksiyon = f"KRİTİK DURUM! {ip} adresi bilinen zararlılar listesindedir. Ağ bağlantısı derhal kesilmelidir!"
+        elif "Account Compromise" in tespit:
+            onerilen_aksiyon = f"İHLAL TESPİTİ! {kullanici} kullanıcısının hesabı ele geçirilmiş olabilir. Acil parola sıfırlama işlemi gereklidir."
+        elif "Brute Force" in tespit:
+            onerilen_aksiyon = f"Acil Durum! {ip} IP adresi derhal Firewall üzerinden engellenmelidir."
+        elif "Mesai Dışı" in tespit:
+            onerilen_aksiyon = f"Şüpheli Giriş! {kullanici} kullanıcısının bu saatte çalışıp çalışmadığı teyit edilmelidir."
+        elif "Şüpheli İşlem" in tespit:
+            onerilen_aksiyon = f"Zararlı Yazılım İhtimali! İlgili bilgisayarda antivirüs taraması yapılmalıdır."
+        elif "Yetkisi Ataması" in tespit:
+            onerilen_aksiyon = f"Yetki Yükseltme! {kullanici} kullanıcısına verilen admin yetkisinin onayı kontrol edilmelidir."
+        elif "Başarısız Giriş" in tespit:
+            onerilen_aksiyon = f"{ip} adresinden gelen giriş denemeleri izlenmeye devam edilmelidir."
+
+        detay_mesaji = f"""🚨 OLAY DETAYI
+--------------------------------------------------
+Risk Seviyesi:  {risk}
+Tarih / Saat:   {saat}
+Kullanıcı:      {kullanici}
+IP Adresi:      {ip}
+Event ID:       {event_id}
+
+📋 Tespit Nedeni:
+{tespit}
+
+🔍 İşlem Durumu:
+{durum}
+--------------------------------------------------
+💡 Önerilen Aksiyon:
+{onerilen_aksiyon}"""
+        
+        uyari = QMessageBox(self)
+        uyari.setWindowTitle("Güvenlik Uyarısı Detayı")
+        uyari.setIcon(QMessageBox.Information)
+        uyari.setText(detay_mesaji)
+        
+        ekran = QApplication.primaryScreen().availableGeometry()
+        x = (ekran.width() - 400) // 2
+        y = (ekran.height() - 200) // 2
+        uyari.move(x, y)
+        
+        uyari.exec()
 
     def export_report(self):
         formatlar = ["CSV (Excel Uyumlu)", "JSON (Yapılandırılmış Metin)"]
