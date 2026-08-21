@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayo
                                QComboBox, QLineEdit, QInputDialog) 
 from PySide6.QtGui import QColor, QFont
 
-# Dashboard tıklanma özelliği için sınıf
+# Tıklanabilir Dashboard kutucukları için sınıf
 class ClickableLabel(QLabel):
     clicked = Signal()
     def mousePressEvent(self, event):
@@ -36,21 +36,25 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # 1. DASHBOARD PANELİ (INTERAKTİF)
-        self.dashboard_group = QGroupBox("📊 Güvenlik Dashboard (Detay için tıklayın)")
+        # 1. DASHBOARD PANELİ (HEPSİ İNTERAKTİF)
+        self.dashboard_group = QGroupBox("📊 Güvenlik Dashboard (Detaylar için metinlere tıklayabilirsiniz)")
         dashboard_layout = QGridLayout() 
 
         self.lbl_total = ClickableLabel("Toplam Olay: 0")
         self.lbl_critical = ClickableLabel("🔴 Kritik Olay: 0")
-        self.lbl_risk_dist = QLabel("📊 Risk Dağılımı: 🟢 0 | 🟡 0 | 🟠 0 | 🔴 0 | ☠️ 0")
+        self.lbl_risk_dist = ClickableLabel("📊 Risk Dağılımı: 🟢 Low | 🟡 Medium | 🟠 High | 🔴 Critical | ☠️ Fatal")
         
-        self.lbl_top_ip = QLabel("🌐 En Aktif IP: -")
-        self.lbl_top_user = QLabel("👤 En Aktif Kullanıcı: -")
-        self.lbl_top_event_id = QLabel("🆔 En Sık Event ID: -")
+        self.lbl_top_ip = ClickableLabel("🌐 En Aktif IP: -")
+        self.lbl_top_user = ClickableLabel("👤 En Aktif Kullanıcı: -")
+        self.lbl_top_event_id = ClickableLabel("🆔 En Sık Event ID: -")
 
-        # Tıklanma aksiyonları
+        # Tıklanma aksiyonları (Hızlı Filtreleme)
         self.lbl_total.clicked.connect(lambda: self.clear_filter())
         self.lbl_critical.clicked.connect(lambda: self.quick_filter("Risk Seviyesi", "Critical"))
+        self.lbl_risk_dist.clicked.connect(self.select_risk_level_dialog) # Risk dağılımı için açılır menü
+        self.lbl_top_ip.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_ip, "IP Adresi", "En Aktif IP: "))
+        self.lbl_top_user.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_user, "Kullanıcı", "En Aktif Kullanıcı: "))
+        self.lbl_top_event_id.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_event_id, "Event ID", "En Sık Event ID: "))
 
         font = QFont()
         font.setBold(True)
@@ -127,13 +131,25 @@ class MainWindow(QMainWindow):
         self.last_mod_time = 0
         self.last_log_count = 0 
 
-    # --- YENİ HIZLI FİLTRELEME ---
+    # --- AKILLI FİLTRELEME FONKSİYONLARI ---
     def quick_filter(self, column, value):
         self.filter_column.setCurrentText(column)
         self.filter_input.setText(value)
         self.apply_filter()
 
-    # --- DİĞER FONKSİYONLAR AYNI ---
+    def filter_by_label_text(self, label, column_name, prefix_text):
+        text = label.text()
+        if ":" in text:
+            val = text.split(":", 1)[1].strip()
+            if val and val != "-":
+                self.quick_filter(column_name, val)
+
+    def select_risk_level_dialog(self):
+        risk_seviyeleri = ["Low", "Medium", "High", "Critical", "Fatal"]
+        secim, ok = QInputDialog.getItem(self, "Risk Seviyesi Seç", "Filtrelemek istediğiniz risk seviyesini seçin:", risk_seviyeleri, 0, False)
+        if ok and secim:
+            self.quick_filter("Risk Seviyesi", secim)
+
     def load_log_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Log Dosyası Seç", "", "Desteklenen Loglar (*.csv *.evtx);;CSV Files (*.csv);;EVTX Files (*.evtx)")
         if file_path:
@@ -312,10 +328,12 @@ class MainWindow(QMainWindow):
                     hucre.setFont(kalin_font)
                 self.log_table.setItem(row_idx, col_idx, hucre)
         self.log_table.resizeColumnsToContents()
+        
         self.lbl_total.setText(f"Toplam Olay: {total_events}")
-        self.lbl_critical.setText(f"🔴 Kritik/Fatal Olay: {critical_events}")
-        dist_text = f"📊 Risk: 🟢 {risk_counts['Low']} | 🟡 {risk_counts['Medium']} | 🟠 {risk_counts['High']} | 🔴 {risk_counts['Critical']} | ☠️ {risk_counts['Fatal']}"
+        self.lbl_critical.setText(f"🔴 Kritik Olay: {critical_events}")
+        dist_text = f"📊 Risk Dağılımı: 🟢 {risk_counts['Low']} | 🟡 {risk_counts['Medium']} | 🟠 {risk_counts['High']} | 🔴 {risk_counts['Critical']} | ☠️ {risk_counts['Fatal']}"
         self.lbl_risk_dist.setText(dist_text)
+        
         if all_ips:
             en_cok_ip = Counter(all_ips).most_common(1)[0][0]
             self.lbl_top_ip.setText(f"🌐 En Aktif IP: {en_cok_ip}")
@@ -325,6 +343,7 @@ class MainWindow(QMainWindow):
         if all_event_ids:
             en_cok_event = Counter(all_event_ids).most_common(1)[0][0]
             self.lbl_top_event_id.setText(f"🆔 En Sık Event ID: {en_cok_event}")
+            
         if ioc_detected and show_popup and new_ioc_found:
             html_kayitlar = "<br>".join(ioc_details)
             html_mesaj = f"<h3>DİKKAT! Log dosyasında bilinen zararlı IP adresleri (IOC) tespit edildi!</h3><b>Bulunan Kayıtlar:</b><br><br>{html_kayitlar}<br><br><i>Lütfen tablodaki ilgili satırları inceleyin ve derhal ağ bağlantısını kesin.</i>"
@@ -405,6 +424,7 @@ class MainWindow(QMainWindow):
                 with open(file_path, "w", encoding="utf-8") as f:
                     json.dump(report_data, f, ensure_ascii=False, indent=4)
                 QMessageBox.information(self, "Başarılı", f"JSON Raporu başarıyla kaydedildi:\n{file_path}")
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
