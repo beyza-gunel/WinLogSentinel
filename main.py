@@ -31,7 +31,6 @@ class MainWindow(QMainWindow):
 
         self.lbl_total = QLabel("Toplam Olay: 0")
         self.lbl_critical = QLabel("🔴 Kritik Olay: 0")
-        # GÜNCELLEME BURADA: FATAL ikonunu ekledik!
         self.lbl_risk_dist = QLabel("📊 Risk Dağılımı: 🟢 0 | 🟡 0 | 🟠 0 | 🔴 0 | ☠️ 0")
         
         self.lbl_top_ip = QLabel("🌐 En Aktif IP: -")
@@ -125,14 +124,13 @@ class MainWindow(QMainWindow):
         
         known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99"] 
         ioc_detected = False
-        ioc_ips_found = set()
+        ioc_details = [] # GÜNCELLEME: IP ve satır numarasını tutacağımız liste
         
         total_events = len(logs)
         critical_events = 0
         all_ips = []
         all_users = []
         all_event_ids = []
-        # GÜNCELLEME BURADA: Fatal sayacı eklendi
         risk_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "Fatal": 0}
         
         for row_idx, log in enumerate(logs):
@@ -179,7 +177,8 @@ class MainWindow(QMainWindow):
                 risk_skoru += 50 
                 tespit = "🚨 IOC MATCH DETECTED (Bilinen Zararlı IP)"
                 ioc_detected = True
-                ioc_ips_found.add(ip)
+                # GÜNCELLEME: Tespit edilen IP'yi satır numarası (row_idx + 1) ile listeye ekliyoruz
+                ioc_details.append(f"IP: {ip}  -->  (Tablo Satırı: {row_idx + 1})")
 
             # --- BONUS 4: OLAY KORELASYONU ---
             if event_id == "4672":
@@ -195,7 +194,7 @@ class MainWindow(QMainWindow):
             # IOC İÇİN ÖZEL GÖRÜNÜM
             if "IOC MATCH" in tespit:
                 risk_seviyesi = "☠️ FATAL"
-                risk_counts["Fatal"] += 1 # GÜNCELLEME: Fatal sayacını artır
+                risk_counts["Fatal"] += 1 
                 critical_events += 1
                 renk = QColor(0, 0, 0) 
                 yazi_rengi = QColor(255, 255, 255) 
@@ -237,7 +236,6 @@ class MainWindow(QMainWindow):
         self.lbl_total.setText(f"Toplam Olay: {total_events}")
         self.lbl_critical.setText(f"🔴 Kritik/Fatal Olay: {critical_events}")
         
-        # GÜNCELLEME BURADA: Dashboard metnine Fatal (☠️) eklendi
         dist_text = f"📊 Risk: 🟢 {risk_counts['Low']} | 🟡 {risk_counts['Medium']} | 🟠 {risk_counts['High']} | 🔴 {risk_counts['Critical']} | ☠️ {risk_counts['Fatal']}"
         self.lbl_risk_dist.setText(dist_text)
         
@@ -251,10 +249,10 @@ class MainWindow(QMainWindow):
             en_cok_event = Counter(all_event_ids).most_common(1)[0][0]
             self.lbl_top_event_id.setText(f"🆔 En Sık Event ID: {en_cok_event}")
 
-        # --- EKRANA FIRLAYAN AKTİF ALARM ---
+        # --- EKRANA FIRLAYAN AKTİF ALARM (GÜNCELLENDİ) ---
         if ioc_detected:
-            tehlikeli_ipler = ", ".join(ioc_ips_found)
-            mesaj = f"DİKKAT! Log dosyasında bilinen zararlı IP adresleri (IOC) tespit edildi!\n\nTespit Edilen IP(ler): {tehlikeli_ipler}\n\nLütfen tabloyu inceleyin ve derhal ağ bağlantısını kesin."
+            tehlikeli_kayitlar = "\n".join(ioc_details)
+            mesaj = f"DİKKAT! Log dosyasında bilinen zararlı IP adresleri (IOC) tespit edildi!\n\nBulunan Kayıtlar:\n{tehlikeli_kayitlar}\n\nLütfen tablodaki ilgili satır(lar)ı inceleyin ve derhal ağ bağlantısını kesin."
             QMessageBox.critical(self, "🚨 KRİTİK GÜVENLİK UYARISI", mesaj)
 
     def apply_filter(self):
