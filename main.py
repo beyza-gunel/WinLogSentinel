@@ -14,6 +14,12 @@ class MainWindow(QMainWindow):
         
         self.setWindowTitle("WinLogSentinel - Security Log Analyzer (Advanced Edition)")
         self.resize(1050, 750) 
+        
+        # --- PENCEREYİ EKRANIN ORTASINA HİZALAMA KODU ---
+        ekran = QApplication.primaryScreen().availableGeometry()
+        x = (ekran.width() - self.width()) // 2
+        y = (ekran.height() - self.height()) // 2
+        self.move(x, y)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
