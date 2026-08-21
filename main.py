@@ -12,14 +12,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        self.setWindowTitle("WinLogSentinel - Security Log Analyzer")
-        self.resize(1000, 700) 
+        self.setWindowTitle("WinLogSentinel - Security Log Analyzer (Advanced Edition)")
+        self.resize(1050, 750) 
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # 1. DASHBOARD PANELİ (GÜNCELLENDİ: 2 Satırlı Profesyonel Grid Yapısı)
+        # 1. DASHBOARD PANELİ (En Sık Event ID ve Risk Dağılımı İçerir)
         self.dashboard_group = QGroupBox("📊 Güvenlik Dashboard")
         dashboard_layout = QGridLayout() 
 
@@ -77,7 +77,7 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.filter_column)
 
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("Aramak istediğiniz değeri yazın... (Örn: Critical veya 4625)")
+        self.filter_input.setPlaceholderText("Aramak istediğiniz değeri yazın... (Örn: Critical, IOC veya 4625)")
         self.filter_input.returnPressed.connect(self.apply_filter)
         filter_layout.addWidget(self.filter_input)
 
@@ -114,6 +114,11 @@ class MainWindow(QMainWindow):
 
     def analyze_and_display(self, logs):
         failed_attempts_by_ip = {}
+        user_event_history = {} # BONUS 4: Olay Korelasyonu için kullanıcı geçmişi
+        
+        # BONUS 3: IOC Analizi için zararlı IP veritabanı (Örnek)
+        known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99"] 
+        
         total_events = len(logs)
         critical_events = 0
         all_ips = []
@@ -122,14 +127,21 @@ class MainWindow(QMainWindow):
         risk_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
         
         for row_idx, log in enumerate(logs):
+            if len(log) < 5: continue # Hatalı satırları atla
             saat, event_id, kullanici, ip, durum = log
             all_ips.append(ip)
             all_users.append(kullanici)
             all_event_ids.append(event_id)
             
+            # Kullanıcı olay geçmişini güncelle
+            if kullanici not in user_event_history:
+                user_event_history[kullanici] = []
+            user_event_history[kullanici].append(event_id)
+            
             risk_skoru = 0
             tespit = "Normal Aktivite"
             
+            # --- TEMEL KURALLAR ---
             if "Administrator" in kullanici and event_id == "4672":
                 risk_skoru += 5
                 tespit = "Kural 3: Şüpheli Yönetici Yetkisi Ataması"
@@ -138,7 +150,7 @@ class MainWindow(QMainWindow):
                 risk_skoru += 10
                 tespit = "Kural 4: Şüpheli İşlem (Zararlı Parent Process)"
                 
-            saat_dilimi = int(saat.split(":")[0])
+            saat_dilimi = int(saat.split(":")[0]) if ":" in saat else 12
             if event_id == "4624" and (saat_dilimi < 6):
                 risk_skoru += 5
                 tespit = "Kural 5: Mesai Dışı Beklenmeyen Giriş"
@@ -154,6 +166,19 @@ class MainWindow(QMainWindow):
                 else:
                     tespit = "Kural 2: Başarısız Giriş"
 
+            # --- BONUS 3: IOC KONTROLÜ ---
+            if ip in known_malicious_ips:
+                risk_skoru += 50 # Direkt çok yüksek risk
+                tespit = "🚨 IOC MATCH DETECTED (Bilinen Zararlı IP)"
+
+            # --- BONUS 4: OLAY KORELASYONU (Kombine Saldırı Tespit) ---
+            # Eğer kullanıcı geçmişinde 4625 (Fail), sonra 4624 (Success) ve şu an 4672 (Admin) varsa
+            if event_id == "4672":
+                gecmis = user_event_history[kullanici]
+                if "4625" in gecmis and "4624" in gecmis:
+                    risk_skoru += 30
+                    tespit = "🚨 Olay Korelasyonu: Possible Account Compromise! (Fail -> Success -> Admin)"
+
             # Risk Dağılımı ve Renklendirme
             if risk_skoru == 0:
                 risk_seviyesi = "🟢 Low"
@@ -163,7 +188,7 @@ class MainWindow(QMainWindow):
                 risk_seviyesi = "🟡 Medium"
                 risk_counts["Medium"] += 1
                 renk = QColor(255, 255, 100) 
-            elif 5 <= risk_skoru <= 9:
+            elif 5 <= risk_skoru <= 15:
                 risk_seviyesi = "🟠 High"
                 risk_counts["High"] += 1
                 renk = QColor(255, 165, 0) 
@@ -244,16 +269,16 @@ class MainWindow(QMainWindow):
         tespit = self.log_table.item(row, 6).text()
 
         onerilen_aksiyon = "Normal bir aktivite, özel bir işleme gerek yoktur."
-        if "Brute Force" in tespit:
-            onerilen_aksiyon = f"Acil Durum! {ip} IP adresi derhal Firewall üzerinden engellenmeli ve {kullanici} kullanıcısının parolası sıfırlanmalıdır."
+        if "IOC MATCH" in tespit:
+            onerilen_aksiyon = f"KRİTİK DURUM! {ip} adresi bilinen zararlılar listesindedir. Ağ bağlantısı derhal kesilmelidir!"
+        elif "Account Compromise" in tespit:
+            onerilen_aksiyon = f"İHLAL TESPİTİ! {kullanici} kullanıcısının hesabı ele geçirilmiş olabilir. Acil parola sıfırlama işlemi gereklidir."
+        elif "Brute Force" in tespit:
+            onerilen_aksiyon = f"Acil Durum! {ip} IP adresi derhal Firewall üzerinden engellenmelidir."
         elif "Mesai Dışı" in tespit:
-            onerilen_aksiyon = f"Şüpheli Giriş! {kullanici} kullanıcısının bu saatte çalışıp çalışmadığı yöneticisinden teyit edilmelidir."
+            onerilen_aksiyon = f"Şüpheli Giriş! {kullanici} kullanıcısının bu saatte çalışıp çalışmadığı teyit edilmelidir."
         elif "Şüpheli İşlem" in tespit:
-            onerilen_aksiyon = f"Zararlı Yazılım İhtimali! İlgili bilgisayarda antivirüs taraması yapılmalı ve {durum} process'i incelenmelidir."
-        elif "Yetkisi Ataması" in tespit:
-            onerilen_aksiyon = f"Yetki Yükseltme! {kullanici} kullanıcısına verilen admin yetkisinin onayı kontrol edilmelidir."
-        elif "Başarısız Giriş" in tespit:
-            onerilen_aksiyon = f"{ip} adresinden gelen giriş denemeleri izlenmeye devam edilmelidir."
+            onerilen_aksiyon = f"Zararlı Yazılım İhtimali! İlgili bilgisayarda antivirüs taraması yapılmalıdır."
 
         detay_mesaji = f"""🚨 OLAY DETAYI
 --------------------------------------------------
@@ -286,45 +311,27 @@ Event ID:       {event_id}
             if file_path:
                 with open(file_path, "w", newline="", encoding="utf-8-sig") as file:
                     writer = csv.writer(file, delimiter=';')
-                    
-                    headers = []
-                    for col in range(self.log_table.columnCount()):
-                        headers.append(self.log_table.horizontalHeaderItem(col).text())
+                    headers = [self.log_table.horizontalHeaderItem(c).text() for c in range(self.log_table.columnCount())]
                     writer.writerow(headers)
-                    
                     for row in range(self.log_table.rowCount()):
-                        row_data = []
-                        for col in range(self.log_table.columnCount()):
-                            item = self.log_table.item(row, col)
-                            if item:
-                                temiz_metin = item.text().replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "")
-                                row_data.append(temiz_metin)
-                            else:
-                                row_data.append("")
+                        row_data = [self.log_table.item(row, c).text().replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "") if self.log_table.item(row, c) else "" for c in range(self.log_table.columnCount())]
                         writer.writerow(row_data)
-                
                 QMessageBox.information(self, "Başarılı", f"CSV Raporu başarıyla kaydedildi:\n{file_path}")
                 
         else:
             file_path, _ = QFileDialog.getSaveFileName(self, "JSON Raporunu Kaydet", "Guvenlik_Analiz_Raporu.json", "JSON Files (*.json)")
             if file_path:
                 report_data = []
-                headers = []
-                for col in range(self.log_table.columnCount()):
-                    headers.append(self.log_table.horizontalHeaderItem(col).text())
-                
+                headers = [self.log_table.horizontalHeaderItem(c).text() for c in range(self.log_table.columnCount())]
                 for row in range(self.log_table.rowCount()):
                     row_dict = {}
-                    for col in range(self.log_table.columnCount()):
-                        item = self.log_table.item(row, col)
-                        val = item.text() if item else ""
-                        val = val.replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "")
-                        row_dict[headers[col]] = val
+                    for c in range(self.log_table.columnCount()):
+                        item = self.log_table.item(row, c)
+                        val = item.text().replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "") if item else ""
+                        row_dict[headers[c]] = val
                     report_data.append(row_dict)
-                
                 with open(file_path, "w", encoding="utf-8") as f:
                     json.dump(report_data, f, ensure_ascii=False, indent=4)
-                
                 QMessageBox.information(self, "Başarılı", f"JSON Raporu başarıyla kaydedildi:\n{file_path}")
 
 if __name__ == "__main__":

@@ -9,3 +9,7 @@ Saat,Event ID,Kullanıcı,IP Adresi,Durum
 17:00:00,4634,Ahmet,192.168.1.10,Normal - Logoff
 03:15:00,4624,Administrator,10.0.0.5,Unusual - Gece Girişi
 03:15:02,4672,Administrator,10.0.0.5,Suspicious - Özel Yetki Ataması
+14:00,4624,HackerUser,185.15.15.15,Success
+14:05,4625,Beyza,192.168.1.50,Failed
+14:06,4624,Beyza,192.168.1.50,Success
+14:07,4672,Beyza,192.168.1.50,Special Privileges
