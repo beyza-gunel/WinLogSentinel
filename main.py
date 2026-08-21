@@ -215,10 +215,34 @@ class MainWindow(QMainWindow):
             self.timer.stop()
             self.btn_live.setText("▶️ Canlı İzlemeyi Başlat (Live Sync)")
             self.btn_live.setStyleSheet("")
+            
+            # Kapatıldığında çıkan uyarı penceresi
+            uyari = QMessageBox(self)
+            uyari.setWindowTitle("Live Sync Durduruldu")
+            uyari.setIcon(QMessageBox.Warning)
+            uyari.setText("Canlı izleme sonlandırıldı. Log dosyası artık arka planda dinlenmiyor.")
+            
+            ekran = QApplication.primaryScreen().availableGeometry()
+            x = (ekran.width() - 400) // 2
+            y = (ekran.height() - 200) // 2
+            uyari.move(x, y)
+            uyari.exec()
         else:
             self.timer.start(2000) 
             self.btn_live.setText("⏹ Canlı İzleme Aktif (Sistem Dinleniyor...)")
             self.btn_live.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
+            
+            # Açıldığında çıkan uyarı penceresi
+            uyari = QMessageBox(self)
+            uyari.setWindowTitle("Live Sync Aktif")
+            uyari.setIcon(QMessageBox.Information)
+            uyari.setText("Canlı izleme başlatıldı. Log dosyasına yeni bir kayıt düştüğünde tablo otomatik olarak güncellenecektir.")
+            
+            ekran = QApplication.primaryScreen().availableGeometry()
+            x = (ekran.width() - 400) // 2
+            y = (ekran.height() - 200) // 2
+            uyari.move(x, y)
+            uyari.exec()
 
     def check_file_update(self):
         if self.current_file and os.path.exists(self.current_file):
