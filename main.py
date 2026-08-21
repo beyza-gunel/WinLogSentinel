@@ -25,7 +25,8 @@ class MainWindow(QMainWindow):
 
         self.lbl_total = QLabel("Toplam Olay: 0")
         self.lbl_critical = QLabel("🔴 Kritik Olay: 0")
-        self.lbl_risk_dist = QLabel("📊 Risk Dağılımı: 🟢 0 | 🟡 0 | 🟠 0 | 🔴 0")
+        # GÜNCELLEME BURADA: FATAL ikonunu ekledik!
+        self.lbl_risk_dist = QLabel("📊 Risk Dağılımı: 🟢 0 | 🟡 0 | 🟠 0 | 🔴 0 | ☠️ 0")
         
         self.lbl_top_ip = QLabel("🌐 En Aktif IP: -")
         self.lbl_top_user = QLabel("👤 En Aktif Kullanıcı: -")
@@ -125,7 +126,8 @@ class MainWindow(QMainWindow):
         all_ips = []
         all_users = []
         all_event_ids = []
-        risk_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
+        # GÜNCELLEME BURADA: Fatal sayacı eklendi
+        risk_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "Fatal": 0}
         
         for row_idx, log in enumerate(logs):
             if len(log) < 5: continue 
@@ -187,10 +189,10 @@ class MainWindow(QMainWindow):
             # IOC İÇİN ÖZEL GÖRÜNÜM
             if "IOC MATCH" in tespit:
                 risk_seviyesi = "☠️ FATAL"
-                risk_counts["Critical"] += 1 
+                risk_counts["Fatal"] += 1 # GÜNCELLEME: Fatal sayacını artır
                 critical_events += 1
-                renk = QColor(0, 0, 0) # Siyah arka plan
-                yazi_rengi = QColor(255, 255, 255) # Beyaz yazı
+                renk = QColor(0, 0, 0) 
+                yazi_rengi = QColor(255, 255, 255) 
                 kalin_yazi = True
             elif risk_skoru == 0:
                 risk_seviyesi = "🟢 Low"
@@ -227,9 +229,10 @@ class MainWindow(QMainWindow):
 
         # DASHBOARD GÜNCELLEMESİ
         self.lbl_total.setText(f"Toplam Olay: {total_events}")
-        self.lbl_critical.setText(f"🔴 Kritik Olay: {critical_events}")
+        self.lbl_critical.setText(f"🔴 Kritik/Fatal Olay: {critical_events}")
         
-        dist_text = f"📊 Risk: 🟢 {risk_counts['Low']} | 🟡 {risk_counts['Medium']} | 🟠 {risk_counts['High']} | 🔴 {risk_counts['Critical']}"
+        # GÜNCELLEME BURADA: Dashboard metnine Fatal (☠️) eklendi
+        dist_text = f"📊 Risk: 🟢 {risk_counts['Low']} | 🟡 {risk_counts['Medium']} | 🟠 {risk_counts['High']} | 🔴 {risk_counts['Critical']} | ☠️ {risk_counts['Fatal']}"
         self.lbl_risk_dist.setText(dist_text)
         
         if all_ips:
