@@ -3,7 +3,7 @@ import csv
 import json
 from collections import Counter 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
-                               QHBoxLayout, QWidget, QTableWidget, QTableWidgetItem, 
+                               QHBoxLayout, QGridLayout, QWidget, QTableWidget, QTableWidgetItem, 
                                QFileDialog, QLabel, QGroupBox, QMessageBox, QAbstractItemView,
                                QComboBox, QLineEdit, QInputDialog) 
 from PySide6.QtGui import QColor, QFont
@@ -19,22 +19,35 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # 1. DASHBOARD PANELİ
+        # 1. DASHBOARD PANELİ (GÜNCELLENDİ: 2 Satırlı Profesyonel Grid Yapısı)
         self.dashboard_group = QGroupBox("📊 Güvenlik Dashboard")
-        dashboard_layout = QHBoxLayout() 
+        dashboard_layout = QGridLayout() 
 
         self.lbl_total = QLabel("Toplam Olay: 0")
         self.lbl_critical = QLabel("🔴 Kritik Olay: 0")
+        self.lbl_risk_dist = QLabel("📊 Risk Dağılımı: 🟢 0 | 🟡 0 | 🟠 0 | 🔴 0")
+        
         self.lbl_top_ip = QLabel("🌐 En Aktif IP: -")
         self.lbl_top_user = QLabel("👤 En Aktif Kullanıcı: -")
+        self.lbl_top_event_id = QLabel("🆔 En Sık Event ID: -")
 
         font = QFont()
         font.setBold(True)
         font.setPointSize(11)
 
-        for lbl in [self.lbl_total, self.lbl_critical, self.lbl_top_ip, self.lbl_top_user]:
+        labels = [self.lbl_total, self.lbl_critical, self.lbl_risk_dist, 
+                  self.lbl_top_ip, self.lbl_top_user, self.lbl_top_event_id]
+        
+        for lbl in labels:
             lbl.setFont(font)
-            dashboard_layout.addWidget(lbl) 
+            
+        dashboard_layout.addWidget(self.lbl_total, 0, 0)
+        dashboard_layout.addWidget(self.lbl_critical, 0, 1)
+        dashboard_layout.addWidget(self.lbl_risk_dist, 0, 2)
+        
+        dashboard_layout.addWidget(self.lbl_top_ip, 1, 0)
+        dashboard_layout.addWidget(self.lbl_top_user, 1, 1)
+        dashboard_layout.addWidget(self.lbl_top_event_id, 1, 2)
 
         self.dashboard_group.setLayout(dashboard_layout)
         main_layout.addWidget(self.dashboard_group) 
@@ -105,11 +118,14 @@ class MainWindow(QMainWindow):
         critical_events = 0
         all_ips = []
         all_users = []
+        all_event_ids = []
+        risk_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
         
         for row_idx, log in enumerate(logs):
             saat, event_id, kullanici, ip, durum = log
             all_ips.append(ip)
             all_users.append(kullanici)
+            all_event_ids.append(event_id)
             
             risk_skoru = 0
             tespit = "Normal Aktivite"
@@ -138,19 +154,24 @@ class MainWindow(QMainWindow):
                 else:
                     tespit = "Kural 2: Başarısız Giriş"
 
+            # Risk Dağılımı ve Renklendirme
             if risk_skoru == 0:
                 risk_seviyesi = "🟢 Low"
+                risk_counts["Low"] += 1
                 renk = QColor(100, 255, 100) 
             elif 1 <= risk_skoru <= 4:
                 risk_seviyesi = "🟡 Medium"
+                risk_counts["Medium"] += 1
                 renk = QColor(255, 255, 100) 
             elif 5 <= risk_skoru <= 9:
                 risk_seviyesi = "🟠 High"
+                risk_counts["High"] += 1
                 renk = QColor(255, 165, 0) 
             else:
                 risk_seviyesi = "🔴 Critical"
-                renk = QColor(255, 50, 50) 
+                risk_counts["Critical"] += 1
                 critical_events += 1
+                renk = QColor(255, 50, 50) 
             
             yazi_rengi = QColor(0, 0, 0) 
 
@@ -165,8 +186,12 @@ class MainWindow(QMainWindow):
                 
         self.log_table.resizeColumnsToContents()
 
+        # DASHBOARD GÜNCELLEMESİ
         self.lbl_total.setText(f"Toplam Olay: {total_events}")
         self.lbl_critical.setText(f"🔴 Kritik Olay: {critical_events}")
+        
+        dist_text = f"📊 Risk: 🟢 {risk_counts['Low']} | 🟡 {risk_counts['Medium']} | 🟠 {risk_counts['High']} | 🔴 {risk_counts['Critical']}"
+        self.lbl_risk_dist.setText(dist_text)
         
         if all_ips:
             en_cok_ip = Counter(all_ips).most_common(1)[0][0]
@@ -174,6 +199,9 @@ class MainWindow(QMainWindow):
         if all_users:
             en_cok_user = Counter(all_users).most_common(1)[0][0]
             self.lbl_top_user.setText(f"👤 En Aktif Kullanıcı: {en_cok_user}")
+        if all_event_ids:
+            en_cok_event = Counter(all_event_ids).most_common(1)[0][0]
+            self.lbl_top_event_id.setText(f"🆔 En Sık Event ID: {en_cok_event}")
 
     def apply_filter(self):
         search_text = self.filter_input.text().lower() 
