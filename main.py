@@ -461,37 +461,82 @@ Event ID:       {event_id}
         uyari.exec()
 
     def export_report(self):
-        formatlar = ["CSV (Excel Uyumlu)", "JSON (Yapılandırılmış Metin)"]
+        import json
+        import csv
+        import os
+        from datetime import datetime
+        
+        formatlar = ["CSV (Excel Uyumlu Tablo)", "JSON (Detaylı Özet ve Yapılandırılmış Metin)"]
         secim, ok = QInputDialog.getItem(self, "Rapor Formatı Seç", "Lütfen kaydetmek istediğiniz formatı seçin:", formatlar, 0, False)
         if not ok: return
-            
+
+        # Özet Verilerini Topla
+        current_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        total_events = self.log_table.rowCount()
+        
+        risk_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "Fatal": 0}
+        suspicious_count = 0
+        events = []
+        
+        headers = [self.log_table.horizontalHeaderItem(c).text() for c in range(self.log_table.columnCount())]
+        
+        for row in range(total_events):
+            row_data = {}
+            for c in range(self.log_table.columnCount()):
+                item = self.log_table.item(row, c)
+                val = item.text() if item else ""
+                row_data[headers[c]] = val
+                
+                if c == 5:
+                    if "Low" in val: risk_counts["Low"] += 1
+                    elif "Medium" in val: risk_counts["Medium"] += 1
+                    elif "High" in val: 
+                        risk_counts["High"] += 1
+                        suspicious_count += 1
+                    elif "Critical" in risk_val if 'risk_val' in locals() else "Critical" in val: 
+                        risk_counts["Critical"] += 1
+                        suspicious_count += 1
+                    elif "FATAL" in val or "Fatal" in val: 
+                        risk_counts["Fatal"] += 1
+                        suspicious_count += 1
+
+            events.append(row_data)
+
+        summary = {
+            "Analiz_Tarihi": current_time,
+            "Analiz_Edilen_Dosya": os.path.basename(self.current_file) if self.current_file else "Bilinmiyor",
+            "Toplam_Olay": total_events,
+            "Supheli_Olay_Sayisi": suspicious_count,
+            "Risk_Dagilimi": f"Low: {risk_counts['Low']}, Medium: {risk_counts['Medium']}, High: {risk_counts['High']}, Critical: {risk_counts['Critical']}, Fatal: {risk_counts['Fatal']}"
+        }
+
+        # 1. Eğer CSV Seçildiyse (Tabloyu bozmayacak temiz Excel formatı)
         if "CSV" in secim:
             file_path, _ = QFileDialog.getSaveFileName(self, "CSV Raporunu Kaydet", "Guvenlik_Analiz_Raporu.csv", "CSV Files (*.csv)")
             if file_path:
                 with open(file_path, "w", newline="", encoding="utf-8-sig") as file:
                     writer = csv.writer(file, delimiter=';')
-                    headers = [self.log_table.horizontalHeaderItem(c).text() for c in range(self.log_table.columnCount())]
                     writer.writerow(headers)
-                    for row in range(self.log_table.rowCount()):
-                        row_data = [self.log_table.item(row, c).text().replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "").replace("☠️ ", "") if self.log_table.item(row, c) else "" for c in range(self.log_table.columnCount())]
-                        writer.writerow(row_data)
+                    for row_data in events:
+                        writer.writerow([row_data.get(h, "").replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "").replace("☠️ ", "") for h in headers])
                 QMessageBox.information(self, "Başarılı", f"CSV Raporu başarıyla kaydedildi:\n{file_path}")
+                
+        # 2. Eğer JSON Seçildiyse (Hocanın istediği tüm özet ve detay bilgileri içeren profesyonel format)
         else:
             file_path, _ = QFileDialog.getSaveFileName(self, "JSON Raporunu Kaydet", "Guvenlik_Analiz_Raporu.json", "JSON Files (*.json)")
             if file_path:
-                report_data = []
-                headers = [self.log_table.horizontalHeaderItem(c).text() for c in range(self.log_table.columnCount())]
-                for row in range(self.log_table.rowCount()):
-                    row_dict = {}
-                    for c in range(self.log_table.columnCount()):
-                        item = self.log_table.item(row, c)
-                        val = item.text().replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "").replace("☠️ ", "") if item else ""
-                        row_dict[headers[c]] = val
-                    report_data.append(row_dict)
+                report_data_final = {
+                    "Rapor_Ozeti": summary,
+                    "Tespit_Edilen_Olaylar": events
+                }
+                
+                for ev in report_data_final["Tespit_Edilen_Olaylar"]:
+                    if "Risk Seviyesi" in ev:
+                        ev["Risk Seviyesi"] = ev["Risk Seviyesi"].replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "").replace("☠️ ", "")
+                        
                 with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(report_data, f, ensure_ascii=False, indent=4)
-                QMessageBox.information(self, "Başarılı", f"JSON Raporu başarıyla kaydedildi:\n{file_path}")
-
+                    json.dump(report_data_final, f, ensure_ascii=False, indent=4)
+                QMessageBox.information(self, "Başarılı", f"Detaylı JSON Raporu başarıyla kaydedildi:\n{file_path}")
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
