@@ -59,19 +59,27 @@ class LogWorker(QThread):
         ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
         try:
             with evtx.Evtx(file_path) as evtx_file:
-                for idx, record in enumerate(evtx_file.records()):
+                # 1. DOSYA ÇOK BÜYÜKSE ÇÖKMEYİ ENGELLE!
+                # Sadece en güncel (en sondaki) 1500 kaydı alıyoruz.
+                all_records = list(evtx_file.records())
+                recent_records = all_records[-1500:] if len(all_records) > 1500 else all_records
+                
+                for idx, record in enumerate(recent_records):
                     root = ET.fromstring(record.xml())
                     system = root.find(f'{ns}System')
                     event_data = root.find(f'{ns}EventData')
                     if system is None: continue
+                    
                     event_id_elem = system.find(f'{ns}EventID')
                     event_id = event_id_elem.text if event_id_elem is not None else ""
+                    
                     time_elem = system.find(f'{ns}TimeCreated')
                     saat = ""
                     if time_elem is not None:
                         raw_time = time_elem.get('SystemTime', '')
                         if "T" in raw_time:
                             saat = raw_time.split("T")[1].split(".")[0][:5] 
+                            
                     kullanici, ip, durum = "System", "-", "Bilgi"
                     if event_data is not None:
                         for data in event_data.findall(f'{ns}Data'):
@@ -87,6 +95,7 @@ class LogWorker(QThread):
                     log_row = [saat, event_id, kullanici, ip, durum]
                     logs.append(log_row)
                     self.log_ready.emit(log_row, idx)
+                    self.msleep(2) # Arayüz nefes alsın diye mini gecikme
         except Exception as e:
             print(f"EVTX ayrıştırma hatası: {e}")
         return logs
@@ -279,9 +288,17 @@ class MainWindow(QMainWindow):
         self.apply_filter()
 
     def filter_by_label_text(self, label, column_name, prefix_text):
+        import re
         text = label.text()
-        if ":" in text:
-            val = text.split(":", 1)[1].strip()
+        
+        # 1. HTML etiketlerini ve görünmez kodları tamamen temizle
+        clean_text = re.sub('<[^<]+>', '', text)
+        
+        # 2. Temiz metin içindeki iki noktadan sonrasını (gerçek değeri) al
+        if ":" in clean_text:
+            val = clean_text.split(":", 1)[1].strip()
+            
+            # Eğer değer boş değilse ve "-" değilse tabloyu anında filtrele
             if val and val != "-":
                 self.quick_filter(column_name, val)
 
@@ -290,6 +307,59 @@ class MainWindow(QMainWindow):
         secim, ok = QInputDialog.getItem(self, "Risk Seviyesi Seç", "Filtrelemek istediğiniz risk seviyesini seçin:", risk_seviyeleri, 0, False)
         if ok and secim:
             self.quick_filter("Risk Seviyesi", secim)
+
+    # BÜTÜN DASHBOARD'U TABLODAN OKUYUP GÜNCELLEYEN FONKSİYON
+    def update_dashboard(self):
+        row_count = self.log_table.rowCount()
+        
+        # Eğer tablo boşsa dashboard'u sıfırla
+        if row_count == 0:
+            return
+            
+        risk_sayilari = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "FATAL": 0}
+        ip_sayilari = {}
+        user_sayilari = {}
+        event_sayilari = {}
+        kritik_sayisi = 0
+
+        # Tablodaki tüm satırları tek tek okuyup kesin sonuçları hesaplıyoruz
+        for row in range(row_count):
+            event_id = self.log_table.item(row, 1).text() if self.log_table.item(row, 1) else ""
+            user = self.log_table.item(row, 2).text() if self.log_table.item(row, 2) else ""
+            ip = self.log_table.item(row, 3).text() if self.log_table.item(row, 3) else ""
+            risk = self.log_table.item(row, 5).text() if self.log_table.item(row, 5) else ""
+            
+            # Risk Dağılımını Say
+            if "Low" in risk: risk_sayilari["Low"] += 1
+            elif "Medium" in risk: risk_sayilari["Medium"] += 1
+            elif "High" in risk: risk_sayilari["High"] += 1
+            elif "Critical" in risk: 
+                risk_sayilari["Critical"] += 1
+                kritik_sayisi += 1
+            elif "FATAL" in risk or "Fatal" in risk: 
+                risk_sayilari["FATAL"] += 1
+                kritik_sayisi += 1
+                
+            # İstatistikler için En Çok Tekrar Edenleri Say
+            if ip and ip != "-": ip_sayilari[ip] = ip_sayilari.get(ip, 0) + 1
+            if user and user != "-": user_sayilari[user] = user_sayilari.get(user, 0) + 1
+            if event_id and event_id != "-": event_sayilari[event_id] = event_sayilari.get(event_id, 0) + 1
+
+        en_aktif_ip = max(ip_sayilari, key=ip_sayilari.get) if ip_sayilari else "-"
+        en_aktif_user = max(user_sayilari, key=user_sayilari.get) if user_sayilari else "-"
+        en_sik_event = max(event_sayilari, key=event_sayilari.get) if event_sayilari else "-"
+
+        # 1. SÜTUN (Mavi Tonları - Bilgi ve Ağ)
+        self.lbl_total.setText(f'<span style="color: #66b3ff;">Toplam Olay: {row_count}</span>')
+        self.lbl_top_ip.setText(f'<span style="color: #66b3ff;">🌐 En Aktif IP: {en_aktif_ip}</span>')
+        
+        # 2. SÜTUN (Sıcak Tonlar - Uyarı ve Aktör)
+        self.lbl_critical.setText(f'<span style="color: #ff6666;">🔴 Kritik Olay: {kritik_sayisi}</span>')
+        self.lbl_top_user.setText(f'<span style="color: #ffb74d;">👤 En Aktif Kullanıcı: {en_aktif_user}</span>')
+        
+        # 3. SÜTUN (Mor ve Karışık Tonlar - Olay Detayları)
+        self.lbl_risk_dist.setText(f'📊 Risk Dağılımı: 🟢 {risk_sayilari["Low"]} | 🟡 {risk_sayilari["Medium"]} | 🟠 {risk_sayilari["High"]} | 🔴 {risk_sayilari["Critical"]} | ☠️ {risk_sayilari["FATAL"]}')
+        self.lbl_top_event_id.setText(f'<span style="color: #b366ff;">🆔 En Sık Event ID: {en_sik_event}</span>')
 
     def load_log_file(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
@@ -359,6 +429,10 @@ class MainWindow(QMainWindow):
         risk_skoru = 0
         tespit = "Normal Aktivite"
         
+        # YENİ: BRUTE FORCE İÇİN HAFIZA (STATE) OLUŞTUR
+        if not hasattr(self, 'failed_attempts'):
+            self.failed_attempts = {}
+
         if "Administrator" in str(kullanici) and str(event_id) == "4672":
             risk_skoru += 5
             tespit = "Kural 3: Şüpheli Yönetici Yetkisi Ataması"
@@ -366,8 +440,17 @@ class MainWindow(QMainWindow):
             risk_skoru += 16
             tespit = "Kural 4: Şüpheli İşlem"
         elif str(event_id) == "4625":
-            risk_skoru += 1
-            tespit = "Kural 2: Başarısız Giriş"
+            # Hatalı girişleri say ve hafızaya yaz!
+            self.failed_attempts[kullanici] = self.failed_attempts.get(kullanici, 0) + 1
+            deneme_sayisi = self.failed_attempts[kullanici]
+            
+            # Eğer aynı kullanıcı 3 kez hata yaparsa tetiği çek!
+            if deneme_sayisi >= 3:
+                risk_skoru += 20
+                tespit = f"Kural 1: Brute Force İhtimali ({deneme_sayisi}. Deneme)"
+            else:
+                risk_skoru += 1
+                tespit = f"Kural 2: Başarısız Giriş ({deneme_sayisi}. Deneme)"
 
         known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99", "185.220.101.5"]
         if str(ip).strip() in known_malicious_ips:
@@ -428,10 +511,9 @@ class MainWindow(QMainWindow):
                 hucre.setFont(kalin_font)
             self.log_table.setItem(target_row, col_idx, hucre)
             
-        if hasattr(self, 'total_events'):
-            self.total_events += 1
-            if hasattr(self, 'update_live_dashboard'):
-                self.update_live_dashboard()
+        # TABLOYA HER SATIR EKLENDİĞİNDE DASHBOARD'U GÜNCELLE
+        if hasattr(self, 'update_dashboard'):
+            self.update_dashboard()
                 
     def stop_analysis_worker(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
