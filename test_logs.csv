@@ -1,16 +1,24 @@
-Saat,Event ID,Kullanıcı,IP Adresi,Durum
-10:00:00,4624,Ahmet,192.168.1.10,Normal - Successful Login
-10:05:00,4688,Ahmet,192.168.1.10,Normal - Process Creation (explorer.exe)
-10:21:03,4625,Administrator,192.168.1.25,Suspicious - Failed Login
-10:21:08,4625,Administrator,192.168.1.25,Suspicious - Failed Login
-10:21:15,4625,Administrator,192.168.1.25,Suspicious - Failed Login
-10:22:01,4625,Administrator,192.168.1.25,Suspicious - Failed Login
-14:30:00,4688,Mehmet,185.220.101.5,Suspicious - cmd.exe (Parent: winword.exe)
-17:00:00,4634,Ahmet,192.168.1.10,Normal - Logoff
-03:15:00,4624,Administrator,10.0.0.5,Unusual - Gece Girişi
-03:15:02,4672,Administrator,10.0.0.5,Suspicious - Özel Yetki Ataması
-14:00,4624,HackerUser,185.15.15.15,Success
-14:05,4625,Beyza,192.168.1.50,Failed
-14:06,4624,Beyza,192.168.1.50,Success
-14:07,4672,Beyza,192.168.1.50,Special Privileges
-15:00,4624,Hacker,185.15.15.15,Success
+Saat,Event ID,Kullanici,IP Adresi,Durum
+08:15,4624,Beyza,192.168.1.50,Sisteme Basarili Giris
+08:20,4624,Ahmet,192.168.1.51,Sisteme Basarili Giris
+08:45,4625,Mehmet,10.0.0.15,Hatali Parola Denemesi
+08:46,4624,Mehmet,10.0.0.15,Sisteme Basarili Giris
+09:00,4672,Administrator,192.168.1.100,Ozel Yetki Atamasi
+09:05,4688,System,192.168.1.100,C:\Windows\System32\cmd.exe
+09:30,4624,Ayse,192.168.1.60,Sisteme Basarili Giris
+10:15,4625,BilinmeyenUser,192.168.1.200,Hatali Parola Denemesi
+10:16,4625,BilinmeyenUser,192.168.1.200,Hatali Parola Denemesi
+10:17,4625,BilinmeyenUser,192.168.1.200,Hatali Parola Denemesi
+10:18,4625,BilinmeyenUser,192.168.1.200,Hatali Parola Denemesi
+11:00,4688,Administrator,192.168.1.100,C:\Windows\System32\cmd.exe
+11:45,4624,StandartUser,192.168.1.75,Sisteme Basarili Giris
+12:30,4625,Hacker,185.15.15.15,Zararli IP Baglanti Denemesi
+12:31,4624,Hacker,185.15.15.15,Zararli IP Basarili Giris
+13:00,4672,Administrator,192.168.1.210,Ozel Yetki Atamasi
+14:15,4688,Guest,192.168.1.25,C:\Windows\System32\cmd.exe
+15:00,4624,Beyza,192.168.1.50,Sisteme Basarili Giris
+03:15,4624,GeceKusu,10.0.0.40,Mesai Disi Giris
+04:20,4624,Administrator,10.0.0.41,Mesai Disi Giris
+16:45,4624,TestKullanici,192.168.1.80,Sisteme Basarili Giris
+17:10,4624,Saldirgan,45.33.32.156,Zararli Sunucu Erisimi
+18:00,4688,System,192.168.1.10,C:\Windows\System32\cmd.exe

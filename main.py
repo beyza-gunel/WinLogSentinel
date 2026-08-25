@@ -4,6 +4,7 @@ import csv
 import json
 from collections import Counter 
 import xml.etree.ElementTree as ET
+import subprocess
 
 import Evtx.Evtx as evtx
 
@@ -220,6 +221,14 @@ class MainWindow(QMainWindow):
         self.btn_export.clicked.connect(self.export_report)
         self.btn_export.setEnabled(False)
         button_layout.addWidget(self.btn_export)
+        
+        # --- YENİ EKLENEN BUTON BURADA ---
+        self.btn_manage_blocks = QPushButton("🛡️ Güvenlik Duvarı & Whitelist")
+        self.btn_manage_blocks.setMinimumHeight(40)
+        self.btn_manage_blocks.clicked.connect(self.show_blocked_ips_manager)
+        button_layout.addWidget(self.btn_manage_blocks)
+        # ---------------------------------
+        
         main_layout.addLayout(button_layout)
 
         # 2.5 IOC MOD SEÇİMİ (Yerel vs VirusTotal)
@@ -354,13 +363,12 @@ class MainWindow(QMainWindow):
             risk_skoru += 5
             tespit = "Kural 3: Şüpheli Yönetici Yetkisi Ataması"
         elif str(event_id) == "4688" and "cmd.exe" in str(durum):
-            risk_skoru += 16  # <-- BURAYI 10 YERİNE 16 YAPTIK (Critical Kırmızı olması için)
+            risk_skoru += 16
             tespit = "Kural 4: Şüpheli İşlem"
         elif str(event_id) == "4625":
             risk_skoru += 1
             tespit = "Kural 2: Başarısız Giriş"
-            
-        # Zararlı IP kontrolünü tekrar buraya (içeri) aldık
+
         known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99", "185.220.101.5"]
         if str(ip).strip() in known_malicious_ips:
             risk_skoru += 50
@@ -369,28 +377,44 @@ class MainWindow(QMainWindow):
         yazi_rengi = QColor(0, 0, 0)
         kalin_yazi = False
         
-        # --- ESKİ ORİJİNAL RENKLER (Siyah Fatal, Kırmızı Critical) ---
+        # --- BEYAZ LİSTE KONTROLLÜ RENK VE ENGELLEME ---
         if "IOC MATCH" in tespit or risk_skoru >= 20:
             risk_seviyesi = "☠️ FATAL"
-            renk = QColor(0, 0, 0) # SİYAH Arka Plan
-            yazi_rengi = QColor(255, 255, 255) # Beyaz Yazı
+            if hasattr(self, "risk_counts"): self.risk_counts["Fatal"] += 1
+            if hasattr(self, "critical_events"): self.critical_events += 1
+            renk = QColor(0, 0, 0)
+            yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
+            
+            # YENİ: Beyaz Liste (Whitelist) Kontrolü
+            if hasattr(self, 'block_ip_in_firewall') and ip and ip != "-":
+                beyaz_liste = getattr(self, 'unblocked_ips', set())
+                if ip in beyaz_liste:
+                    tespit += " [✅ İZİN VERİLDİ - Pas geçildi]"
+                else:
+                    self.block_ip_in_firewall(ip, sessiz_mod=True)
+                    tespit += " [⛔ OTO-ENGELLENDİ]"
+                    
         elif risk_skoru == 0:
             risk_seviyesi = "🟢 Low"
-            renk = QColor(100, 255, 100) # Yeşil
+            if hasattr(self, "risk_counts"): self.risk_counts["Low"] += 1
+            renk = QColor(100, 255, 100)
         elif 1 <= risk_skoru <= 4:
             risk_seviyesi = "🟡 Medium"
-            renk = QColor(255, 255, 100) # Sarı
+            if hasattr(self, "risk_counts"): self.risk_counts["Medium"] += 1
+            renk = QColor(255, 255, 100)
         elif 5 <= risk_skoru <= 15:
             risk_seviyesi = "🟠 High"
-            renk = QColor(255, 165, 0) # Turuncu
+            if hasattr(self, "risk_counts"): self.risk_counts["High"] += 1
+            renk = QColor(255, 165, 0)
         else:
             risk_seviyesi = "🔴 Critical"
-            renk = QColor(255, 50, 50) # Canlı Kırmızı
+            if hasattr(self, "risk_counts"): self.risk_counts["Critical"] += 1
+            if hasattr(self, "critical_events"): self.critical_events += 1
+            renk = QColor(255, 50, 50)
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
 
-        # Tabloya Ekleme İşlemi
         self.log_table.insertRow(target_row)
         satir_verileri = [saat, event_id, kullanici, ip, durum, risk_seviyesi, tespit]
         
@@ -404,11 +428,11 @@ class MainWindow(QMainWindow):
                 hucre.setFont(kalin_font)
             self.log_table.setItem(target_row, col_idx, hucre)
             
-        # Dashboard değerlerini güncellemek istersen (isteğe bağlı)
         if hasattr(self, 'total_events'):
             self.total_events += 1
             if hasattr(self, 'update_live_dashboard'):
                 self.update_live_dashboard()
+                
     def stop_analysis_worker(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.terminate()
@@ -713,6 +737,109 @@ class MainWindow(QMainWindow):
         for row in range(self.log_table.rowCount()):
             self.log_table.setRowHidden(row, False)
 
+    def block_ip_in_firewall(self, ip_address, sessiz_mod=False):
+        if not ip_address or ip_address == "-": return
+        
+        rule_name = f"WinLogSentinel_Block_{ip_address}"
+        komut = f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=block remoteip={ip_address}'
+        
+        try:
+            import subprocess
+            # Komutu çalıştır
+            subprocess.run(komut, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # Eğer kullanıcı butona basarak engellediyse mesaj ver, sistem kendi engellediyse sessiz kal
+            if not sessiz_mod:
+                QMessageBox.information(self, "Başarılı", f"⛔ {ip_address} IP adresi Windows Firewall üzerinden başarıyla engellendi!")
+        except subprocess.CalledProcessError:
+            # Eğer yetki yoksa sadece manuel işlemlerde hata ver (akışı bölmemek için)
+            if not sessiz_mod:
+                QMessageBox.critical(self, "Yetki Hatası", "Güvenlik duvarı kuralı eklenemedi!\n\nLütfen WinLogSentinel programını (veya VS Code'u) 'Yönetici Olarak Çalıştır' seçeneğiyle açıp tekrar deneyin.")
+
+    def show_blocked_ips_manager(self):
+        import subprocess
+        
+        if not hasattr(self, 'unblocked_ips'):
+            self.unblocked_ips = set()
+            
+        # 1. Hangi listeyi görüntülemek istediğini sor
+        modlar = [
+            "⛔ Engellenen IP'leri Listele (Engeli Kaldır)",
+            "✅ Beyaz Listedeki (İzin Verilen) IP'leri Listele / Yönet"
+        ]
+        secilen_mod, ok = QInputDialog.getItem(
+            self, 
+            "🛡️ IP Yönetim Paneli", 
+            "İşlem yapmak istediğiniz kategoriyi seçin:", 
+            modlar, 0, False
+        )
+        if not ok or not secilen_mod:
+            return
+
+        # --- A. ENGELLENEN IP'LER MODU ---
+        if "⛔ Engellenen" in secilen_mod:
+            komut = 'netsh advfirewall firewall show rule name=all'
+            engellenenler = []
+            
+            try:
+                result = subprocess.run(komut, shell=True, capture_output=True, text=True, encoding='cp857')
+                for line in result.stdout.splitlines():
+                    if "WinLogSentinel_Block_" in line:
+                        parts = line.split("WinLogSentinel_Block_")
+                        if len(parts) > 1:
+                            ip = parts[1].strip()
+                            if ip not in engellenenler:
+                                engellenenler.append(ip)
+            except Exception as e:
+                print(f"Okuma hatası: {e}")
+            
+            if not engellenenler:
+                QMessageBox.information(self, "Bilgi", "Şu anda güvenlik duvarında engellenmiş bir IP adresi bulunmuyor.")
+                return
+                
+            secilen_ip, ok = QInputDialog.getItem(
+                self, 
+                "⛔ Engellenen IP Listesi", 
+                "Engelini kaldırıp 'Beyaz Liste'ye almak istediğiniz IP'yi seçin:", 
+                engellenenler, 0, False
+            )
+            
+            if ok and secilen_ip:
+                kural_adi = f"WinLogSentinel_Block_{secilen_ip}"
+                sil_komut = f'netsh advfirewall firewall delete rule name="{kural_adi}"'
+                try:
+                    subprocess.run(sil_komut, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    self.unblocked_ips.add(secilen_ip)
+                    QMessageBox.information(
+                        self, 
+                        "Başarılı", 
+                        f"✅ {secilen_ip} IP adresinin engeli kaldırıldı ve Beyaz Liste'ye eklendi!"
+                    )
+                except subprocess.CalledProcessError:
+                    QMessageBox.critical(self, "Yetki Hatası", "Engel kaldırılamadı!\n\nLütfen programı Yönetici olarak çalıştırın.")
+
+        # --- B. BEYAZ LİSTE (İZİN VERİLENLER) MODU ---
+        else:
+            if not self.unblocked_ips:
+                QMessageBox.information(self, "Bilgi", "Şu anda Beyaz Liste'de (İzin Verilen) kayıtlı bir IP adresi bulunmuyor.")
+                return
+                
+            beyaz_liste_dizi = list(self.unblocked_ips)
+            secilen_ip, ok = QInputDialog.getItem(
+                self, 
+                "✅ Beyaz Liste (İzin Verilenler)", 
+                "Beyaz listeden ÇIKARMAK (Tekrar tespit edildiğinde engellenebilir yapmak) istediğiniz IP'yi seçin:\n\n(İşlem yapmadan çıkmak için İptal'e basabilirsiniz)", 
+                beyaz_liste_dizi, 0, False
+            )
+            
+            if ok and secilen_ip:
+                self.unblocked_ips.remove(secilen_ip)
+                QMessageBox.information(
+                    self, 
+                    "Güncellendi", 
+                    f"ℹ️ {secilen_ip} IP adresi Beyaz Liste'den çıkarıldı.\n\nBir sonraki analizde zararlı olarak gelirse tekrar otomatik olarak engellenecektir."
+                )
+
     def show_event_details(self, row, column):
         saat = self.log_table.item(row, 0).text()
         event_id = self.log_table.item(row, 1).text()
@@ -723,49 +850,45 @@ class MainWindow(QMainWindow):
         tespit = self.log_table.item(row, 6).text()
 
         onerilen_aksiyon = "Normal bir aktivite, özel bir işleme gerek yoktur."
-        if "IOC MATCH" in tespit:
+        gerekli_mudahale = False 
+
+        if "IOC MATCH" in tespit: 
             onerilen_aksiyon = f"KRİTİK DURUM! {ip} adresi bilinen zararlılar listesindedir. Ağ bağlantısı derhal kesilmelidir!"
-        elif "Account Compromise" in tespit:
-            onerilen_aksiyon = f"İHLAL TESPİTİ! {kullanici} kullanıcısının hesabı ele geçirilmiş olabilir. Acil parola sıfırlama işlemi gereklidir."
-        elif "Brute Force" in tespit:
+            gerekli_mudahale = True
+        elif "Brute Force" in tespit: 
             onerilen_aksiyon = f"Acil Durum! {ip} IP adresi derhal Firewall üzerinden engellenmelidir."
-        elif "Mesai Dışı" in tespit:
-            onerilen_aksiyon = f"Şüpheli Giriş! {kullanici} kullanıcısının bu saatte çalışıp çalışmadığı teyit edilmelidir."
-        elif "Şüpheli İşlem" in tespit:
+            gerekli_mudahale = True
+        elif "Şüpheli İşlem" in tespit: 
             onerilen_aksiyon = f"Zararlı Yazılım İhtimali! İlgili bilgisayarda antivirüs taraması yapılmalıdır."
         elif "Yetkisi Ataması" in tespit:
             onerilen_aksiyon = f"Yetki Yükseltme! {kullanici} kullanıcısına verilen admin yetkisinin onayı kontrol edilmelidir."
         elif "Başarısız Giriş" in tespit:
             onerilen_aksiyon = f"{ip} adresinden gelen giriş denemeleri izlenmeye devam edilmelidir."
+        elif "Mesai Dışı" in tespit:
+            onerilen_aksiyon = f"Şüpheli Giriş! {kullanici} kullanıcısının bu saatte çalışıp çalışmadığı teyit edilmelidir."
+        elif "Account Compromise" in tespit:
+            onerilen_aksiyon = f"İHLAL TESPİTİ! {kullanici} kullanıcısının hesabı ele geçirilmiş olabilir. Acil parola sıfırlama işlemi gereklidir."
 
-        detay_mesaji = f"""🚨 OLAY DETAYI
---------------------------------------------------
-Risk Seviyesi:  {risk}
-Tarih / Saat:   {saat}
-Kullanıcı:      {kullanici}
-IP Adresi:      {ip}
-Event ID:       {event_id}
-
-📋 Tespit Nedeni:
-{tespit}
-
-🔍 İşlem Durumu:
-{durum}
---------------------------------------------------
-💡 Önerilen Aksiyon:
-{onerilen_aksiyon}"""
+        detay_mesaji = f"Risk Seviyesi: {risk}\nTarih / Saat: {saat}\nKullanıcı: {kullanici}\nIP Adresi: {ip}\nEvent ID: {event_id}\n\n📋 Tespit Nedeni:\n{tespit}\n\n🔍 İşlem Durumu:\n{durum}\n\n💡 Önerilen Aksiyon:\n{onerilen_aksiyon}"
         
         uyari = QMessageBox(self)
         uyari.setWindowTitle("Güvenlik Uyarısı Detayı")
         uyari.setIcon(QMessageBox.Information)
         uyari.setText(detay_mesaji)
         
-        ekran = QApplication.primaryScreen().availableGeometry()
-        x = (ekran.width() - 400) // 2
-        y = (ekran.height() - 200) // 2
-        uyari.move(x, y)
+        # Standart "Tamam" butonu
+        ok_btn = uyari.addButton(QMessageBox.Ok)
         
+        # Eğer zararlı bir IP varsa "Engelle" butonu ekle
+        block_btn = None
+        if gerekli_mudahale and ip and ip != "-":
+            block_btn = uyari.addButton("⛔ Bu IP'yi Firewall'dan Engelle", QMessageBox.ActionRole)
+            
         uyari.exec()
+
+        # Eğer kullanıcı engelle butonuna bastıysa fonksiyonu çağır
+        if block_btn and uyari.clickedButton() == block_btn:
+            self.block_ip_in_firewall(ip)
 
     def export_report(self):
         import json
