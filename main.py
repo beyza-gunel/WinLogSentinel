@@ -113,8 +113,12 @@ class LogWorker(QThread):
                                 # '2026-08-25T07:15:12.420336+00:00' gibi yapıları anında çözer
                                 temiz_zaman = raw_time.replace("Z", "+00:00")
                                 dt = datetime.fromisoformat(temiz_zaman)
-                                tarih = dt.strftime("%Y-%m-%d") # Örn: 2026-08-25
-                                saat = dt.strftime("%H:%M:%S")  # Örn: 07:15:12
+                                
+                                # YENİ: UTC saatini bilgisayarın yerel saatine (örn: Türkiye UTC+3) çeviriyoruz
+                                dt_local = dt.astimezone() 
+                                
+                                tarih = dt_local.strftime("%Y-%m-%d") # Örn: 2026-08-25
+                                saat = dt_local.strftime("%H:%M:%S")  # Örn: 10:15:12 (3 saat eklenmiş hali)
                             except Exception:
                                 # Eğer özel bir format olursa manuel parçalama devreye girsin
                                 if "T" in raw_time:
@@ -519,6 +523,10 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'failed_attempts'):
             self.failed_attempts = {}
 
+        # --- YENİ KURAL: BAŞARILI GİRİŞTE SAYACI SIFIRLA ---
+        if str(event_id) == "4624":
+            self.failed_attempts[kullanici] = 0
+
         if "Administrator" in str(kullanici) and str(event_id) == "4672":
             risk_skoru += 5
             tespit = "Kural 3: Şüpheli Yönetici Yetkisi Ataması"
@@ -603,8 +611,31 @@ class MainWindow(QMainWindow):
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
 
+        # --- TABLOYA YAZMADAN ÖNCE EVENT ID AÇIKLAMALARI EKLİYORUZ ---
+        event_sozlugu = {
+            "4624": "Başarılı Oturum Açma",
+            "4625": "Hatalı Şifre Denemesi",
+            "4634": "Oturum Kapatıldı",
+            "4647": "Kullanıcı Çıkış Yaptı",
+            "4672": "Özel Yetki (Admin) Kullanıldı",
+            "4688": "Yeni Program/Komut Çalıştırıldı",
+            "4720": "Yeni Hesap Açıldı",
+            "4722": "Hesap Aktif Hale Getirildi",
+            "4724": "Şifre Sıfırlama İşlemi",
+            "4732": "Gruba Yeni Üye Eklendi",
+            "4740": "Hesap Kilitlendi",
+            "1102": "DİKKAT: Loglar Silindi!",
+            "5379": "Kayıtlı Şifrelere Erişildi"
+        }
+        
+        # Eğer listede yoksa "Diğer Olay" yerine daha mantıklı bir şey yazsın
+        aciklama = event_sozlugu.get(str(event_id), "Standart Sistem İşlemi")
+        gosterilecek_event = f"{event_id} ({aciklama})"
+
+        # Sadece burada bir tane insertRow var, başka hiçbir yerde yok!
         self.log_table.insertRow(target_row)
-        satir_verileri = [tarih, saat, event_id, kullanici, ip, durum, risk_seviyesi, tespit]
+        
+        satir_verileri = [tarih, saat, gosterilecek_event, kullanici, ip, durum, risk_seviyesi, tespit]
         
         for col_idx, data in enumerate(satir_verileri):
             hucre = QTableWidgetItem(str(data))
@@ -618,6 +649,7 @@ class MainWindow(QMainWindow):
             
         if hasattr(self, 'update_dashboard'):
             self.update_dashboard()
+            
         # Akış sırasında saat sütununun genişliğini her satırda garantiye alıyoruz
         self.log_table.setColumnWidth(1, 110)
                 
