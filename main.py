@@ -5,6 +5,8 @@ import json
 from collections import Counter 
 import xml.etree.ElementTree as ET
 import subprocess
+import numpy as np
+from sklearn.ensemble import IsolationForest
 
 import Evtx.Evtx as evtx
 
@@ -42,25 +44,48 @@ class LogWorker(QThread):
                 import csv
                 with open(self.file_path, "r", encoding="utf-8") as file:
                     reader = csv.reader(file)
-                    next(reader, None) 
-                    logs = list(reader)
-                    for idx, log in enumerate(logs):
-                        self.log_ready.emit(log, idx)
-                        self.msleep(15) # Akış hissi için minik gecikme
+                    next(reader, None) # Başlık satırını atla
+                    raw_rows = list(reader)
+                    for idx, row in enumerate(raw_rows):
+                        if len(row) >= 6:
+                            tarih = row[0].strip()
+                            saat = row[1].strip()
+                            event_id = row[2].strip()
+                            kullanici = row[3].strip()
+                            ip = row[4].strip()
+                            durum = row[5].strip()
+                        elif len(row) == 5:
+                            tarih = "-"
+                            saat = row[0].strip()
+                            event_id = row[1].strip()
+                            kullanici = row[2].strip()
+                            ip = row[3].strip()
+                            durum = row[4].strip()
+                        else:
+                            continue
+                            
+                        log_row = [tarih, saat, event_id, kullanici, ip, durum]
+                        logs.append(log_row)
+                        self.log_ready.emit(log_row, idx)
+                        self.msleep(15)
+                        
             elif self.file_path.endswith('.evtx'):
+                # EVTX dosyaları için ayrıştırma fonksiyonunu çağırıyoruz
                 logs = self.parse_evtx_stream(self.file_path)
             
             self.finished.emit(logs)
         except Exception as e:
             self.error.emit(str(e))
-
+            
     def parse_evtx_stream(self, file_path):
         logs = []
         ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
+        
+        # SIFIRLAMA NOKTASI: Her yeni analizde Brute Force sayacını sıfırlıyoruz
+        self.failed_attempts = {}
+        
         try:
             with evtx.Evtx(file_path) as evtx_file:
-                # 1. DOSYA ÇOK BÜYÜKSE ÇÖKMEYİ ENGELLE!
-                # Sadece en güncel (en sondaki) 1500 kaydı alıyoruz.
                 all_records = list(evtx_file.records())
                 recent_records = all_records[-1500:] if len(all_records) > 1500 else all_records
                 
@@ -73,13 +98,33 @@ class LogWorker(QThread):
                     event_id_elem = system.find(f'{ns}EventID')
                     event_id = event_id_elem.text if event_id_elem is not None else ""
                     
+                    # Tarih ve Saati Tertemiz Ayıran Kesin Çözüm
+                    tarih, saat = "-", "-"
                     time_elem = system.find(f'{ns}TimeCreated')
-                    saat = ""
                     if time_elem is not None:
-                        raw_time = time_elem.get('SystemTime', '')
-                        if "T" in raw_time:
-                            saat = raw_time.split("T")[1].split(".")[0][:5] 
+                        raw_time = time_elem.get('SystemTime')
+                        if not raw_time and time_elem.text:
+                            raw_time = time_elem.text.strip()
                             
+                        if raw_time:
+                            try:
+                                # ISO formatındaki zamanı python datetime nesnesine çeviriyoruz
+                                from datetime import datetime
+                                # '2026-08-25T07:15:12.420336+00:00' gibi yapıları anında çözer
+                                temiz_zaman = raw_time.replace("Z", "+00:00")
+                                dt = datetime.fromisoformat(temiz_zaman)
+                                tarih = dt.strftime("%Y-%m-%d") # Örn: 2026-08-25
+                                saat = dt.strftime("%H:%M:%S")  # Örn: 07:15:12
+                            except Exception:
+                                # Eğer özel bir format olursa manuel parçalama devreye girsin
+                                if "T" in raw_time:
+                                    parts = raw_time.split("T")
+                                    tarih = parts[0]
+                                    saat = parts[1].split(".")[0].split("+")[0]
+                                else:
+                                    tarih = raw_time
+                                    
+                    # Kullanıcı, IP ve Durum Okuyucu
                     kullanici, ip, durum = "System", "-", "Bilgi"
                     if event_data is not None:
                         for data in event_data.findall(f'{ns}Data'):
@@ -87,23 +132,25 @@ class LogWorker(QThread):
                             val = data.text or ""
                             if name in ['TargetUserName', 'SubjectUserName'] and val and val != "SYSTEM":
                                 kullanici = val
-                            elif name == 'IpAddress' and val and val != "-":
+                            elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-":
                                 ip = val
                             elif name == 'NewProcessName':
-                                durum = val.split("\\")[-1] 
-                    
-                    log_row = [saat, event_id, kullanici, ip, durum]
+                                durum = val.split("\\")[-1]
+
+                    # 6 Elemanlı Kusursuz Liste
+                    log_row = [tarih, saat, event_id, kullanici, ip, durum]
                     logs.append(log_row)
                     self.log_ready.emit(log_row, idx)
-                    self.msleep(2) # Arayüz nefes alsın diye mini gecikme
+                    self.msleep(1)
+
         except Exception as e:
             print(f"EVTX ayrıştırma hatası: {e}")
         return logs
 
 class MainWindow(QMainWindow):
     def add_single_log_row_live(self, log, row_idx):
-        if len(log) < 5: return
-        saat, event_id, kullanici, ip, durum = log
+        if len(log) < 6: return
+        tarih, saat, event_id, kullanici, ip, durum = log
         
         risk_skoru = 0
         tespit = "Normal Aktivite"
@@ -120,7 +167,7 @@ class MainWindow(QMainWindow):
         known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99", "185.220.101.5"]
         if ip in known_malicious_ips:
             risk_skoru += 50
-            tespit = "🚨 IOC MATCH DETECTED (Zارarlı IP Tespiti)"
+            tespit = "🚨 IOC MATCH DETECTED (Zararlı IP Tespiti)"
 
         yazi_rengi = QColor(0, 0, 0)
         kalin_yazi = False
@@ -143,7 +190,7 @@ class MainWindow(QMainWindow):
             renk = QColor(255, 50, 50)
 
         self.log_table.insertRow(row_idx)
-        satir_verileri = [saat, event_id, kullanici, ip, durum, risk_seviyesi, tespit]
+        satir_verileri = [tarih, saat, event_id, kullanici, ip, durum, risk_seviyesi, tespit]
         for col_idx, data in enumerate(satir_verileri):
             hucre = QTableWidgetItem(data)
             hucre.setBackground(renk)
@@ -154,11 +201,20 @@ class MainWindow(QMainWindow):
                 hucre.setFont(kalin_font)
             self.log_table.setItem(row_idx, col_idx, hucre)
 
+        # Sütunların içeriği tam sığması için genişliği otomatik ayarlıyoruz
+        self.log_table.resizeColumnToContents(1) # Özellikle 'Saat' sütunu (1. indis) için
+
     def __init__(self):
         super().__init__()
         
         self.setWindowTitle("WinLogSentinel - Security Log Analyzer (Ultimate Edition)")
         self.resize(1100, 750) 
+
+        # --- YAPAY ZEKA (AI) MOTORU BAŞLATILIYOR ---
+        # contamination=0.05 demek: "Gördüğün verilerin en sıradışı %5'ini anomali (saldırı) olarak işaretle"
+        self.ai_model = IsolationForest(contamination=0.05, random_state=42)
+        self.ai_data_buffer = [] # AI'ın öğrenmesi için geçmiş saatleri tutacağımız liste
+        self.ai_is_trained = False # Modelin eğitilip eğitilmediğini kontrol eden bayrak
         
         ekran = QApplication.primaryScreen().availableGeometry()
         x = (ekran.width() - self.width()) // 2
@@ -267,14 +323,27 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.btn_clear_filter)
         main_layout.addLayout(filter_layout) 
 
-        # 4. TABLO
+        # 4. TABLO (Sütun sayısı 8 oldu)
         self.log_table = QTableWidget()
-        self.log_table.setColumnCount(7)
-        self.log_table.setHorizontalHeaderLabels(["Saat", "Event ID", "Kullanıcı", "IP Adresi", "Durum", "Risk Seviyesi", "Tespit Nedeni"])
+        self.log_table.setColumnCount(8)
+        self.log_table.setHorizontalHeaderLabels(["Tarih", "Saat", "Event ID", "Kullanıcı", "IP Adresi", "Durum", "Risk Seviyesi", "Tespit Nedeni"])
+        
+        # Sütun genişliklerini kesilmeyecek şekilde ayarlıyoruz
+        self.log_table.setColumnWidth(0, 100) # Tarih sütunu
+        self.log_table.setColumnWidth(1, 110) # Saat sütunu (85'ten 110'a çıkardık, artık kesilmeyecek)
+        self.log_table.setColumnWidth(2, 80)  # Event ID
+        self.log_table.setColumnWidth(3, 120) # Kullanıcı
+        self.log_table.setColumnWidth(4, 130) # IP Adresi
+        self.log_table.setColumnWidth(5, 140) # Durum
+        self.log_table.setColumnWidth(6, 110) # Risk Seviyesi
+        # Saat sütununun akış sırasında asla daralmasını ve kesilmesini engelliyoruz
+        self.log_table.horizontalHeader().resizeSection(1, 110)
+        self.log_table.horizontalHeader().setMinimumSectionSize(110)
+        
         self.log_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         main_layout.addWidget(self.log_table)
         self.log_table.cellDoubleClicked.connect(self.show_event_details)
-        
+
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_file_update)
         self.current_file = None
@@ -324,10 +393,10 @@ class MainWindow(QMainWindow):
 
         # Tablodaki tüm satırları tek tek okuyup kesin sonuçları hesaplıyoruz
         for row in range(row_count):
-            event_id = self.log_table.item(row, 1).text() if self.log_table.item(row, 1) else ""
-            user = self.log_table.item(row, 2).text() if self.log_table.item(row, 2) else ""
-            ip = self.log_table.item(row, 3).text() if self.log_table.item(row, 3) else ""
-            risk = self.log_table.item(row, 5).text() if self.log_table.item(row, 5) else ""
+            event_id = self.log_table.item(row, 2).text() if self.log_table.item(row, 2) else ""
+            user = self.log_table.item(row, 3).text() if self.log_table.item(row, 3) else ""
+            ip = self.log_table.item(row, 4).text() if self.log_table.item(row, 4) else ""
+            risk = self.log_table.item(row, 6).text() if self.log_table.item(row, 6) else ""
             
             # Risk Dağılımını Say
             if "Low" in risk: risk_sayilari["Low"] += 1
@@ -344,7 +413,7 @@ class MainWindow(QMainWindow):
             if ip and ip != "-": ip_sayilari[ip] = ip_sayilari.get(ip, 0) + 1
             if user and user != "-": user_sayilari[user] = user_sayilari.get(user, 0) + 1
             if event_id and event_id != "-": event_sayilari[event_id] = event_sayilari.get(event_id, 0) + 1
-
+            
         en_aktif_ip = max(ip_sayilari, key=ip_sayilari.get) if ip_sayilari else "-"
         en_aktif_user = max(user_sayilari, key=user_sayilari.get) if user_sayilari else "-"
         en_sik_event = max(event_sayilari, key=event_sayilari.get) if event_sayilari else "-"
@@ -425,12 +494,27 @@ class MainWindow(QMainWindow):
 
     def add_single_log_row_live(self, log, row_idx):
         if len(log) < 5: return
-        saat, event_id, kullanici, ip, durum = log
-        target_row = self.log_table.rowCount()
         
+        if len(log) == 6:
+            tarih, saat, event_id, kullanici, ip, durum = log
+        else:
+            zaman_str = str(log[0])
+            if " " in zaman_str:
+                parca = zaman_str.split(" ")
+                tarih, saat = parca[0], parca[1]
+            else:
+                tarih, saat = "-", zaman_str
+            event_id = log[1]
+            kullanici = log[2]
+            ip = log[3]
+            durum = log[4]
+        
+        # En başta risk skoru ve tespiti sıfırdan başlatıyoruz ki hata vermesin
         risk_skoru = 0
         tespit = "Normal Aktivite"
         
+        target_row = self.log_table.rowCount()
+
         # YENİ: BRUTE FORCE İÇİN HAFIZA (STATE) OLUŞTUR
         if not hasattr(self, 'failed_attempts'):
             self.failed_attempts = {}
@@ -442,17 +526,33 @@ class MainWindow(QMainWindow):
             risk_skoru += 16
             tespit = "Kural 4: Şüpheli İşlem"
         elif str(event_id) == "4625":
-            # Hatalı girişleri say ve hafızaya yaz!
             self.failed_attempts[kullanici] = self.failed_attempts.get(kullanici, 0) + 1
             deneme_sayisi = self.failed_attempts[kullanici]
             
-            # Eğer aynı kullanıcı 3 kez hata yaparsa tetiği çek!
             if deneme_sayisi >= 3:
                 risk_skoru += 20
                 tespit = f"Kural 1: Brute Force İhtimali ({deneme_sayisi}. Deneme)"
             else:
                 risk_skoru += 1
                 tespit = f"Kural 2: Başarısız Giriş ({deneme_sayisi}. Deneme)"
+
+        # 🧠 YAPAY ZEKA (AI) ANOMALİ TESPİT MOTORU
+        if str(event_id) == "4624":
+            try:
+                saat_sadece = int(saat.split(":")[0]) if ":" in saat else 12
+                self.ai_data_buffer.append([saat_sadece])
+                
+                if len(self.ai_data_buffer) == 30:
+                    self.ai_model.fit(self.ai_data_buffer)
+                    self.ai_is_trained = True
+                
+                if self.ai_is_trained:
+                    ai_sonuc = self.ai_model.predict([[saat_sadece]])[0]
+                    if ai_sonuc == -1:
+                        risk_skoru += 25
+                        tespit = "🧠 AI TESPİTİ: Alışılmadık Saatte Davranış Anomalisi!"
+            except Exception as e:
+                pass
 
         known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99", "185.220.101.5"]
         if str(ip).strip() in known_malicious_ips:
@@ -462,7 +562,6 @@ class MainWindow(QMainWindow):
         yazi_rengi = QColor(0, 0, 0)
         kalin_yazi = False
         
-        # --- BEYAZ LİSTE KONTROLLÜ RENK VE ENGELLEME ---
         if "IOC MATCH" in tespit or risk_skoru >= 20:
             risk_seviyesi = "☠️ FATAL"
             if hasattr(self, "risk_counts"): self.risk_counts["Fatal"] += 1
@@ -471,13 +570,11 @@ class MainWindow(QMainWindow):
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
 
-           # YENİ: Ekrana çıkacak Pop-Up uyarısı için IP'yi ve SATIR NUMARASINI hafızaya kaydet
             if hasattr(self, 'current_fatal_alerts') and ip and ip != "-":
                 mesaj = f"🔴 <b>[TEHDİT]</b> IP: {ip} &nbsp;&nbsp;(Olay: {event_id}, Satır: {target_row + 1})"
                 if mesaj not in self.current_fatal_alerts:
                     self.current_fatal_alerts.append(mesaj)
             
-            # YENİ: Beyaz Liste (Whitelist) Kontrolü
             if hasattr(self, 'block_ip_in_firewall') and ip and ip != "-":
                 beyaz_liste = getattr(self, 'unblocked_ips', set())
                 if ip in beyaz_liste:
@@ -507,7 +604,7 @@ class MainWindow(QMainWindow):
             kalin_yazi = True
 
         self.log_table.insertRow(target_row)
-        satir_verileri = [saat, event_id, kullanici, ip, durum, risk_seviyesi, tespit]
+        satir_verileri = [tarih, saat, event_id, kullanici, ip, durum, risk_seviyesi, tespit]
         
         for col_idx, data in enumerate(satir_verileri):
             hucre = QTableWidgetItem(str(data))
@@ -519,9 +616,10 @@ class MainWindow(QMainWindow):
                 hucre.setFont(kalin_font)
             self.log_table.setItem(target_row, col_idx, hucre)
             
-        # TABLOYA HER SATIR EKLENDİĞİNDE DASHBOARD'U GÜNCELLE
         if hasattr(self, 'update_dashboard'):
             self.update_dashboard()
+        # Akış sırasında saat sütununun genişliğini her satırda garantiye alıyoruz
+        self.log_table.setColumnWidth(1, 110)
                 
     def stop_analysis_worker(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
@@ -583,12 +681,24 @@ class MainWindow(QMainWindow):
                     if system is None: continue
                     event_id_elem = system.find(f'{ns}EventID')
                     event_id = event_id_elem.text if event_id_elem is not None else ""
+
+                   # 1. KUSURSUZ TARİH VE SAAT AYIRICI
+                    tarih, saat = "-", "-"
                     time_elem = system.find(f'{ns}TimeCreated')
-                    saat = ""
                     if time_elem is not None:
-                        raw_time = time_elem.get('SystemTime', '')
-                        if "T" in raw_time:
-                            saat = raw_time.split("T")[1].split(".")[0][:5] 
+                        raw_time = time_elem.get('SystemTime')
+                        if not raw_time and time_elem.text:
+                            raw_time = time_elem.text.strip()
+                            
+                        if raw_time:
+                            if "T" in raw_time:
+                                parts = raw_time.split("T")
+                                tarih = parts[0] # Örn: 2026-08-25
+                                saat = parts[1].split(".")[0] # Örn: 08:25:00
+                            else:
+                                tarih = raw_time
+
+                    # 2. KULLANICI, IP (GENİŞLETİLMİŞ) VE DURUM OKUYUCU
                     kullanici, ip, durum = "System", "-", "Bilgi"
                     if event_data is not None:
                         for data in event_data.findall(f'{ns}Data'):
@@ -596,11 +706,14 @@ class MainWindow(QMainWindow):
                             val = data.text or ""
                             if name in ['TargetUserName', 'SubjectUserName'] and val and val != "SYSTEM":
                                 kullanici = val
-                            elif name == 'IpAddress' and val and val != "-":
+                            # IP adresini ve alternatif ağ alanlarını yakalıyoruz
+                            elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-":
                                 ip = val
                             elif name == 'NewProcessName':
                                 durum = val.split("\\")[-1] 
-                    logs.append([saat, event_id, kullanici, ip, durum])
+
+                    logs.append([tarih, saat, event_id, kullanici, ip, durum])
+
         except Exception as e:
             print(f"EVTX ayrıştırma hatası: {e}")
         return logs
@@ -691,7 +804,11 @@ class MainWindow(QMainWindow):
         
         for row_idx, log in enumerate(logs):
             if len(log) < 5: continue 
-            saat, event_id, kullanici, ip, durum = log
+            if len(log) == 6:
+                tarih, saat, event_id, kullanici, ip, durum = log
+            else:
+                tarih, saat, event_id, kullanici, ip, durum = "-", log[0], log[1], log[2], log[3], log[4]
+
             all_ips.append(ip)
             all_users.append(kullanici)
             all_event_ids.append(event_id)
@@ -819,7 +936,9 @@ class MainWindow(QMainWindow):
     def apply_filter(self):
         search_text = self.filter_input.text().lower() 
         selected_column = self.filter_column.currentText()
-        column_map = {"Saat": 0, "Event ID": 1, "Kullanıcı": 2, "IP Adresi": 3, "Durum": 4, "Risk Seviyesi": 5, "Tespit Nedeni": 6}
+        # Yeni sütun sıralamasına göre indeksler güncellendi:
+        column_map = {"Tarih": 0, "Saat": 1, "Event ID": 2, "Kullanıcı": 3, "IP Adresi": 4, "Durum": 5, "Risk Seviyesi": 6, "Tespit Nedeni": 7}
+        # (Filtreleme kodunun geri kalanı aynı kalabilir)
         for row in range(self.log_table.rowCount()):
             match = False
             if selected_column == "Tümü":
@@ -953,13 +1072,14 @@ class MainWindow(QMainWindow):
                 )
 
     def show_event_details(self, row, column):
-        saat = self.log_table.item(row, 0).text()
-        event_id = self.log_table.item(row, 1).text()
-        kullanici = self.log_table.item(row, 2).text()
-        ip = self.log_table.item(row, 3).text()
-        durum = self.log_table.item(row, 4).text()
-        risk = self.log_table.item(row, 5).text()
-        tespit = self.log_table.item(row, 6).text()
+        tarih = self.log_table.item(row, 0).text()
+        saat = self.log_table.item(row, 1).text()
+        event_id = self.log_table.item(row, 2).text()
+        kullanici = self.log_table.item(row, 3).text()
+        ip = self.log_table.item(row, 4).text()
+        durum = self.log_table.item(row, 5).text()
+        risk = self.log_table.item(row, 6).text()
+        tespit = self.log_table.item(row, 7).text()
 
         onerilen_aksiyon = "Normal bir aktivite, özel bir işleme gerek yoktur."
         gerekli_mudahale = False 
