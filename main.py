@@ -336,9 +336,9 @@ class MainWindow(QMainWindow):
             elif "Critical" in risk: 
                 risk_sayilari["Critical"] += 1
                 kritik_sayisi += 1
+
             elif "FATAL" in risk or "Fatal" in risk: 
                 risk_sayilari["FATAL"] += 1
-                kritik_sayisi += 1
                 
             # İstatistikler için En Çok Tekrar Edenleri Say
             if ip and ip != "-": ip_sayilari[ip] = ip_sayilari.get(ip, 0) + 1
@@ -471,9 +471,9 @@ class MainWindow(QMainWindow):
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
 
-            # YENİ: Ekrana çıkacak Pop-Up uyarısı için IP'yi hafızaya kaydet
+           # YENİ: Ekrana çıkacak Pop-Up uyarısı için IP'yi ve SATIR NUMARASINI hafızaya kaydet
             if hasattr(self, 'current_fatal_alerts') and ip and ip != "-":
-                mesaj = f"🔴 <b>[TEHDİT]</b> IP: {ip} &nbsp;&nbsp;(Olay: {event_id})"
+                mesaj = f"🔴 <b>[TEHDİT]</b> IP: {ip} &nbsp;&nbsp;(Olay: {event_id}, Satır: {target_row + 1})"
                 if mesaj not in self.current_fatal_alerts:
                     self.current_fatal_alerts.append(mesaj)
             
@@ -867,7 +867,7 @@ class MainWindow(QMainWindow):
         except subprocess.CalledProcessError:
             if not sessiz_mod:
                 QMessageBox.critical(self, "Yetki Hatası", "Güvenlik duvarı kuralı eklenemedi!\n\nLütfen WinLogSentinel programını Yönetici (Administrator) olarak çalıştırdığınızdan emin olun.")
-                
+
     def show_blocked_ips_manager(self):
         import subprocess
         
