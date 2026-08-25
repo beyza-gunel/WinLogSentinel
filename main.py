@@ -415,6 +415,8 @@ class MainWindow(QMainWindow):
         if not append:
             self.log_table.setRowCount(0)
 
+        self.current_fatal_alerts = [] # Yeni dosya yüklendiğinde eski uyarı listesini temizle
+        self.worker = LogWorker(file_path, ioc_mode, known_malicious_ips, vt_api_key)
         self.worker = LogWorker(file_path, ioc_mode, known_malicious_ips, vt_api_key)
         self.worker.log_ready.connect(self.add_single_log_row_live)
         self.worker.finished.connect(lambda logs: self.on_analysis_finished(logs, show_popup, is_live_update))
@@ -468,6 +470,12 @@ class MainWindow(QMainWindow):
             renk = QColor(0, 0, 0)
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
+
+            # YENİ: Ekrana çıkacak Pop-Up uyarısı için IP'yi hafızaya kaydet
+            if hasattr(self, 'current_fatal_alerts') and ip and ip != "-":
+                mesaj = f"🔴 <b>[TEHDİT]</b> IP: {ip} &nbsp;&nbsp;(Olay: {event_id})"
+                if mesaj not in self.current_fatal_alerts:
+                    self.current_fatal_alerts.append(mesaj)
             
             # YENİ: Beyaz Liste (Whitelist) Kontrolü
             if hasattr(self, 'block_ip_in_firewall') and ip and ip != "-":
@@ -537,13 +545,27 @@ class MainWindow(QMainWindow):
     def on_analysis_finished(self, logs, show_popup, is_live_update):
         self.reset_load_button()
         self.log_table.resizeColumnsToContents()
-        
-        # Canlı akış zaten satırları eklediği için analyze_and_display ile tekrar ekletmiyoruz,
-        # sadece toplam log sayısını güncelliyoruz.
         self.last_log_count = len(logs)
         
-        # Eğer istersen sadece dashboard üstündeki toplam sayaçları güncelleyen bir fonksiyon çağırabilirsin
-        # Örn: self.update_dashboard_counters(logs)
+        # --- EKSİK OLAN FATAL POP-UP UYARISI BURAYA GELDİ ---
+        if hasattr(self, 'current_fatal_alerts') and self.current_fatal_alerts and show_popup:
+            html_kayitlar = "<br>".join(self.current_fatal_alerts)
+            html_mesaj = f"<h3>🚨 DİKKAT! Log dosyasında Kritik (FATAL) seviyede tehditler tespit edildi!</h3><b>Bulunan Kayıtlar:</b><br><br>{html_kayitlar}<br><br><i>Sistem bu IP'leri otomatik olarak engellemiş olabilir. Lütfen detayları tablodan inceleyin.</i>"
+            
+            uyari = QMessageBox(self)
+            uyari.setWindowTitle("KRİTİK GÜVENLİK UYARISI")
+            uyari.setIcon(QMessageBox.Critical)
+            uyari.setText(html_mesaj)
+            
+            # Uyarıyı tam ekranın ortasında çıkart
+            ekran = QApplication.primaryScreen().availableGeometry()
+            x = (ekran.width() - 400) // 2
+            y = (ekran.height() - 200) // 2
+            uyari.move(x, y)
+            
+            uyari.exec()
+            
+            self.current_fatal_alerts = [] # Uyarıyı gösterdikten sonra listeyi sıfırla
         
     def on_analysis_error(self, err_msg):
         self.reset_load_button()
@@ -822,22 +844,30 @@ class MainWindow(QMainWindow):
     def block_ip_in_firewall(self, ip_address, sessiz_mod=False):
         if not ip_address or ip_address == "-": return
         
+        import subprocess
         rule_name = f"WinLogSentinel_Block_{ip_address}"
+        
+        # 1. Önce bu IP için daha önce kural oluşturulmuş mu diye Firewall'a soruyoruz
+        kontrol_komutu = f'netsh advfirewall firewall show rule name="{rule_name}"'
+        kontrol_sonucu = subprocess.run(kontrol_komutu, shell=True, capture_output=True)
+        
+        # Eğer sonuç 0 dönüyorsa, bu isimde bir kural zaten var demektir!
+        if kontrol_sonucu.returncode == 0:
+            if not sessiz_mod:
+                QMessageBox.information(self, "Zaten Engelli", f"ℹ️ {ip_address} IP adresi zaten Firewall üzerinde engellenmiş durumda!\n\nEkstra bir işleme gerek yoktur.")
+            return # Zaten engelli olduğu için aşağıdaki kodları hiç çalıştırmadan fonksiyondan çık
+        
+        # 2. Eğer kural yoksa, normal engelleme işlemine geçiyoruz
         komut = f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=block remoteip={ip_address}'
         
         try:
-            import subprocess
-            # Komutu çalıştır
             subprocess.run(komut, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Eğer kullanıcı butona basarak engellediyse mesaj ver, sistem kendi engellediyse sessiz kal
             if not sessiz_mod:
                 QMessageBox.information(self, "Başarılı", f"⛔ {ip_address} IP adresi Windows Firewall üzerinden başarıyla engellendi!")
         except subprocess.CalledProcessError:
-            # Eğer yetki yoksa sadece manuel işlemlerde hata ver (akışı bölmemek için)
             if not sessiz_mod:
-                QMessageBox.critical(self, "Yetki Hatası", "Güvenlik duvarı kuralı eklenemedi!\n\nLütfen WinLogSentinel programını (veya VS Code'u) 'Yönetici Olarak Çalıştır' seçeneğiyle açıp tekrar deneyin.")
-
+                QMessageBox.critical(self, "Yetki Hatası", "Güvenlik duvarı kuralı eklenemedi!\n\nLütfen WinLogSentinel programını Yönetici (Administrator) olarak çalıştırdığınızdan emin olun.")
+                
     def show_blocked_ips_manager(self):
         import subprocess
         
@@ -958,13 +988,13 @@ class MainWindow(QMainWindow):
         uyari.setIcon(QMessageBox.Information)
         uyari.setText(detay_mesaji)
         
-        # Standart "Tamam" butonu
-        ok_btn = uyari.addButton(QMessageBox.Ok)
-        
-        # Eğer zararlı bir IP varsa "Engelle" butonu ekle
+        # Eğer IP geçerliyse Engelle butonunu "YesRole" ile SOLA zorluyoruz
         block_btn = None
-        if gerekli_mudahale and ip and ip != "-":
-            block_btn = uyari.addButton("⛔ Bu IP'yi Firewall'dan Engelle", QMessageBox.ActionRole)
+        if ip and ip != "-" and ip.lower() != "system":
+            block_btn = uyari.addButton("⛔ Bu IP'yi Firewall'dan Engelle", QMessageBox.YesRole)
+            
+        # OK butonunu "NoRole" ile SAĞA zorluyoruz
+        ok_btn = uyari.addButton("OK", QMessageBox.NoRole)
             
         uyari.exec()
 
