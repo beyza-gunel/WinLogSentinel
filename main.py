@@ -347,7 +347,7 @@ class MainWindow(QMainWindow):
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(QLabel("Filtrele:"))
         self.filter_column = QComboBox()
-        self.filter_column.addItems(["Tümü", "Saat", "Event ID", "Kullanıcı", "IP Adresi", "Durum", "Risk Seviyesi", "Tespit Nedeni"])
+        self.filter_column.addItems(["Tümü", "Tarih", "Saat", "Event ID", "Kullanıcı", "IP Adresi", "Durum", "Risk Seviyesi", "Tespit Nedeni"])
         filter_layout.addWidget(self.filter_column)
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText("Aramak istediğiniz değeri yazın...")
@@ -545,7 +545,18 @@ class MainWindow(QMainWindow):
     def apply_filter(self):
         search_text = self.filter_input.text().lower() 
         selected_column = self.filter_column.currentText()
-        column_map = {"Tarih": 0, "Saat": 1, "Event ID": 2, "Kullanıcı": 3, "IP Adresi": 4, "Durum": 5, "Risk Seviyesi": 6, "Tespit Nedeni": 7}
+
+        column_map = {
+        "Tarih": 0, 
+        "Saat": 1, 
+        "Event ID": 2, 
+        "Kullanıcı": 3, 
+        "IP Adresi": 4, 
+        "Durum": 5, 
+        "Risk Seviyesi": 6, 
+        "Tespit Nedeni": 7
+        }
+
         for row in range(self.log_table.rowCount()):
             match = False
             if selected_column == "Tümü":
