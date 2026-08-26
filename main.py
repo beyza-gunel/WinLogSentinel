@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
             risk_skoru += 5
             tespit = "Kural 3: Şüpheli Yönetici Yetkisi Ataması"
         elif str(event_id) == "4688" and "cmd.exe" in durum:
-            risk_skoru += 10
+            risk_skoru += 16
             tespit = "Kural 4: Şüpheli İşlem"
         elif str(event_id) == "4625":
             self.failed_attempts[kullanici] = self.failed_attempts.get(kullanici, 0) + 1
@@ -219,7 +219,7 @@ class MainWindow(QMainWindow):
         if "IOC MATCH" in tespit or risk_skoru >= 20:
             risk_seviyesi = "☠️ FATAL"
             if not hasattr(self, 'current_fatal_alerts'): self.current_fatal_alerts = []
-            self.current_fatal_alerts.append(f"IP: {ip} - {tespit}")
+            self.current_fatal_alerts.append(f"⏱️ {saat} | IP: {ip} - {tespit}")
             renk = QColor(0, 0, 0)
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
@@ -430,9 +430,9 @@ class MainWindow(QMainWindow):
 
         self.lbl_total.setText(f'<span style="color: #66b3ff;">Toplam Olay: {row_count}</span>')
         self.lbl_top_ip.setText(f'<span style="color: #66b3ff;">🌐 En Aktif IP: {en_aktif_ip}</span>')
-        self.lbl_critical.setText(f'<span style="color: #ff6666;">🔴 Kritik Olay: {kritik_sayisi}</span>')
+        self.lbl_critical.setText(f'<span style="color: #ff6666;">🔴 Kritik Olay: {risk_sayilari["Critical"]}</span>')
         self.lbl_top_user.setText(f'<span style="color: #ffb74d;">👤 En Aktif Kullanıcı: {en_aktif_user}</span>')
-        self.lbl_risk_dist.setText(f'📊 Risk Dağılımı: 🟢 {risk_sayilari["Low"]} | 🟡 {risk_sayilari["Medium"]} | 🟠 {risk_sayilari["High"]} | 🔴 {risk_sayilari["Critical"]} | ☠️ {risk_sayilari["FATAL"]}')
+        self.lbl_risk_dist.setText(f'📊 Risk Dağılımı: 🟢 Low: {risk_sayilari["Low"]} | 🟡 Medium: {risk_sayilari["Medium"]} | 🟠 High: {risk_sayilari["High"]} | 🔴 Critical: {risk_sayilari["Critical"]} | ☠️ Fatal: {risk_sayilari["FATAL"]}')
         self.lbl_top_event_id.setText(f'<span style="color: #b366ff;">🆔 En Sık Event ID: {en_sik_event.split(" ")[0]}</span>')
 
     def load_log_file(self):
@@ -461,6 +461,8 @@ class MainWindow(QMainWindow):
             self.btn_export.setEnabled(True)
             self.btn_live.setEnabled(True)
             self.log_table.setRowCount(0)
+            self.failed_attempts = {}
+            self.current_fatal_alerts = []
             self.last_log_count = 0
             self.process_file(file_path, show_popup=True, scan_mode=scan_mode)
 
@@ -509,6 +511,7 @@ class MainWindow(QMainWindow):
             
         if hasattr(self, 'current_fatal_alerts') and self.current_fatal_alerts and show_popup:
             unique_alerts = list(set(self.current_fatal_alerts))
+            unique_alerts.sort(reverse=True)  # <-- İŞTE SIRALAMAYI DÜZELTEN SİHİRLİ SATIR
             html_kayitlar = "<br>".join(unique_alerts)
             html_mesaj = f"<h3>🚨 DİKKAT! Log dosyasında Kritik (FATAL) seviyede tehditler tespit edildi!</h3><b>Bulunan Kayıtlar:</b><br><br>{html_kayitlar}"
             uyari = QMessageBox(self)
@@ -622,23 +625,53 @@ class MainWindow(QMainWindow):
         uyari.exec()
 
     def export_report(self):
-        formatlar = ["CSV", "JSON"]
+        formatlar = ["Excel (.xlsx)", "CSV (.csv)", "JSON (.json)"]
         secim, ok = QInputDialog.getItem(self, "Rapor", "Format:", formatlar, 0, False)
         if not ok: return
+        
         headers = [self.log_table.horizontalHeaderItem(c).text() for c in range(self.log_table.columnCount())]
         events = []
         for row in range(self.log_table.rowCount()):
             if self.log_table.isRowHidden(row): continue 
             row_data = {headers[c]: (self.log_table.item(row, c).text() if self.log_table.item(row, c) else "") for c in range(self.log_table.columnCount())}
             events.append(row_data)
-        if "CSV" in secim:
+            
+        if not events:
+            QMessageBox.warning(self, "Uyarı", "Dışarı aktarılacak kayıt bulunamadı!")
+            return
+
+        import pandas as pd
+        import openpyxl
+        df = pd.DataFrame(events)
+
+        if "Excel" in secim:
+            path, _ = QFileDialog.getSaveFileName(self, "Kaydet", "Rapor.xlsx", "Excel (*.xlsx)")
+            if path:
+                # Pandas ile Excel'e kaydederken sütun genişliklerini otomatik ayarlıyoruz:
+                with pd.ExcelWriter(path, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='LogRaporu')
+                    worksheet = writer.sheets['LogRaporu']
+                    # Tüm sütunların genişliğini içindeki metne göre otomatik ayarla (######## hatası biter!)
+                    for col in worksheet.columns:
+                        max_len = max(len(str(cell.value or '')) for cell in col)
+                        col_letter = openpyxl.utils.get_column_letter(col[0].column)
+                        worksheet.column_dimensions[col_letter].width = max(max_len + 4, 15)
+                QMessageBox.information(self, "Başarılı", "Excel raporu başarıyla kaydedildi.")
+
+        elif "CSV" in secim:
             path, _ = QFileDialog.getSaveFileName(self, "Kaydet", "Rapor.csv", "CSV (*.csv)")
             if path:
-                with open(path, "w", newline="", encoding="utf-8-sig") as f:
-                    w = csv.writer(f, delimiter=';')
-                    w.writerow(headers)
-                    for ev in events: w.writerow([ev.get(h, "") for h in headers])
-                QMessageBox.information(self, "Başarılı", "Kaydedildi.")
+                df.to_csv(path, index=False, sep=';', encoding='utf-8-sig')
+                QMessageBox.information(self, "Başarılı", "CSV raporu başarıyla kaydedildi.")
+
+        elif "JSON" in secim:
+            path, _ = QFileDialog.getSaveFileName(self, "Kaydet", "Rapor.json", "JSON (*.json)")
+            if path:
+                df.to_csv(path, index=False, encoding='utf-8') # Alternatif veya direkt json
+                import json
+                with open(path, 'w', encoding='utf-8') as jf:
+                    json.dump(events, jf, ensure_ascii=False, indent=4)
+                QMessageBox.information(self, "Başarılı", "JSON raporu başarıyla kaydedildi.")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
