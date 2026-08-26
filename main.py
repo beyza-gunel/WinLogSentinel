@@ -2,171 +2,212 @@ import sys
 import os
 import csv
 import json
-from collections import Counter 
-import xml.etree.ElementTree as ET
 import subprocess
 import numpy as np
+from datetime import datetime
+from collections import Counter
 from sklearn.ensemble import IsolationForest
 
-import Evtx.Evtx as evtx
+import xml.etree.ElementTree as ET
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal, QThread, QCoreApplication
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
                                QHBoxLayout, QGridLayout, QWidget, QTableWidget, QTableWidgetItem, 
                                QFileDialog, QLabel, QGroupBox, QMessageBox, QAbstractItemView,
                                QComboBox, QLineEdit, QInputDialog) 
 from PySide6.QtGui import QColor, QFont
 
-# Tıklanabilir Dashboard kutucukları için sınıf
 class ClickableLabel(QLabel):
     clicked = Signal()
     def mousePressEvent(self, event):
         self.clicked.emit()
 
-from PySide6.QtCore import QThread, Signal
-
 class LogWorker(QThread):
     log_ready = Signal(list, int)
-    finished = Signal(list)
+    finished = Signal(int)
     error = Signal(str)
 
-    def __init__(self, file_path, ioc_mode, known_malicious_ips, vt_api_key):
+    def __init__(self, file_path, ioc_mode, known_malicious_ips, vt_api_key, scan_mode="gecmis", last_count=0):
         super().__init__()
         self.file_path = file_path
         self.ioc_mode = ioc_mode
         self.known_malicious_ips = known_malicious_ips
         self.vt_api_key = vt_api_key
+        self.scan_mode = scan_mode
+        self.last_count = last_count
 
     def run(self):
         try:
-            logs = []
-            if self.file_path.endswith('.csv'):
-                import csv
-                with open(self.file_path, "r", encoding="utf-8") as file:
-                    reader = csv.reader(file)
-                    next(reader, None) # Başlık satırını atla
-                    raw_rows = list(reader)
-                    for idx, row in enumerate(raw_rows):
-                        if len(row) >= 6:
-                            tarih = row[0].strip()
-                            saat = row[1].strip()
-                            event_id = row[2].strip()
-                            kullanici = row[3].strip()
-                            ip = row[4].strip()
-                            durum = row[5].strip()
-                        elif len(row) == 5:
-                            tarih = "-"
-                            saat = row[0].strip()
-                            event_id = row[1].strip()
-                            kullanici = row[2].strip()
-                            ip = row[3].strip()
-                            durum = row[4].strip()
-                        else:
-                            continue
-                            
-                        log_row = [tarih, saat, event_id, kullanici, ip, durum]
-                        logs.append(log_row)
-                        self.log_ready.emit(log_row, idx)
-                        self.msleep(15)
+            total_records_processed = 0
+            # Eğer kullanıcı gerçek Windows Güvenlik günlüğünü seçtiyse veya canlı izlemedeysek wevtutil motorunu çalıştır
+            if "Security.evtx" in self.file_path or self.scan_mode == "wevtutil_canli":
+                total_records_processed = self.parse_wevtutil_live()
+            else:
+                # Normal dosya yüklemeleri için standart EVTX/CSV okuyucu
+                if self.file_path.endswith('.csv'):
+                    import csv
+                    with open(self.file_path, "r", encoding="utf-8") as file:
+                        reader = csv.reader(file)
+                        next(reader, None) 
+                        raw_rows = list(reader)
+                        total_records_processed = len(raw_rows)
+                        raw_rows.reverse()
+                        for idx, row in enumerate(raw_rows):
+                            if len(row) >= 6:
+                                log_row = [row[0].strip(), row[1].strip(), row[2].strip(), row[3].strip(), row[4].strip(), row[5].strip()]
+                            else:
+                                continue
+                            self.log_ready.emit(log_row, idx)
+                else:
+                    import Evtx.Evtx as evtx
+                    import tempfile
+                    import time
+                    unique_name = f"WinLogSentinel_{int(time.time() * 1000)}.evtx"
+                    temp_path = os.path.join(tempfile.gettempdir(), unique_name)
+                    shutil_copied = False
+                    try:
+                        import shutil
+                        shutil.copy2(self.file_path, temp_path)
+                        shutil_copied = True
+                    except Exception:
+                        temp_path = self.file_path
                         
-            elif self.file_path.endswith('.evtx'):
-                # EVTX dosyaları için ayrıştırma fonksiyonunu çağırıyoruz
-                logs = self.parse_evtx_stream(self.file_path)
+                    with evtx.Evtx(temp_path) as evtx_file:
+                        all_records = list(evtx_file.records())
+                        total_records_processed = len(all_records)
+                        
+                        if self.scan_mode == "canli_sadece":
+                            self.log_ready.emit(["-", "-", "🟢 CANLI DİNLEME AKTİF", "Sistem", f"Geçmiş {total_records_processed} log yoksayıldı. Sistem dinleniyor..."], 0)
+                            return total_records_processed
+                            
+                        records_to_process = all_records[self.last_count:total_records_processed] if self.scan_mode == "canli_guncelleme" else all_records
+                        records_to_process.reverse()
+                        
+                        ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
+                        for idx, record in enumerate(records_to_process):
+                            try:
+                                root = ET.fromstring(record.xml())
+                                system = root.find(f'{ns}System')
+                                event_data = root.find(f'{ns}EventData')
+                                if system is None: continue
+                                
+                                event_id = system.find(f'{ns}EventID').text if system.find(f'{ns}EventID') is not None else ""
+                                raw_time = system.find(f'{ns}TimeCreated').get('SystemTime') if system.find(f'{ns}TimeCreated') is not None else ""
+                                
+                                tarih, saat = "-", "-"
+                                if raw_time:
+                                    dt_local = datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone()
+                                    tarih, saat = dt_local.strftime("%Y-%m-%d"), dt_local.strftime("%H:%M:%S")
+                                    
+                                kullanici, ip, durum = "System", "-", "Bilgi"
+                                if event_data is not None:
+                                    for data in event_data.findall(f'{ns}Data'):
+                                        name, val = data.get('Name'), data.text or ""
+                                        if name in ['TargetUserName', 'SubjectUserName'] and val and val != "SYSTEM": kullanici = val
+                                        elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-": ip = val
+                                        elif name == 'NewProcessName': durum = val.split("\\")[-1]
+                                        
+                                self.log_ready.emit([tarih, saat, event_id, kullanici, ip, durum], idx)
+                            except Exception:
+                                continue
+                                
+                    if shutil_copied and os.path.exists(temp_path):
+                        try: os.remove(temp_path)
+                        except Exception: pass
             
-            self.finished.emit(logs)
+            self.finished.emit(total_records_processed)
         except Exception as e:
             self.error.emit(str(e))
-            
-    def parse_evtx_stream(self, file_path):
-        logs = []
-        ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
-        
-        # SIFIRLAMA NOKTASI: Her yeni analizde Brute Force sayacını sıfırlıyoruz
-        self.failed_attempts = {}
-        
+
+    def parse_wevtutil_live(self):
+        logs_count = 0
         try:
-            with evtx.Evtx(file_path) as evtx_file:
-                all_records = list(evtx_file.records())
-                recent_records = all_records[-1500:] if len(all_records) > 1500 else all_records
+            cmd = 'wevtutil qe Security /c:50 /rd:true /f:xml'
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            if result.returncode != 0:
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='cp1254', errors='ignore')
                 
-                for idx, record in enumerate(recent_records):
-                    root = ET.fromstring(record.xml())
-                    system = root.find(f'{ns}System')
-                    event_data = root.find(f'{ns}EventData')
+            xml_output = f"<Events>{result.stdout}</Events>"
+            root = ET.fromstring(xml_output)
+            ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
+            
+            records = root.findall(f'.//{ns}Event')
+            logs_count = len(records)
+            
+            gecici_liste = []
+            for event in records:
+                try:
+                    system = event.find(f'{ns}System')
+                    event_data = event.find(f'{ns}EventData')
                     if system is None: continue
                     
-                    event_id_elem = system.find(f'{ns}EventID')
-                    event_id = event_id_elem.text if event_id_elem is not None else ""
+                    event_id = system.find(f'{ns}EventID').text if system.find(f'{ns}EventID') is not None else ""
+                    raw_time = system.find(f'{ns}TimeCreated').get('SystemTime') if system.find(f'{ns}TimeCreated') is not None else ""
                     
-                    # Tarih ve Saati Tertemiz Ayıran Kesin Çözüm
+                    siralama_zamani = raw_time if raw_time else "0000"
                     tarih, saat = "-", "-"
-                    time_elem = system.find(f'{ns}TimeCreated')
-                    if time_elem is not None:
-                        raw_time = time_elem.get('SystemTime')
-                        if not raw_time and time_elem.text:
-                            raw_time = time_elem.text.strip()
-                            
-                        if raw_time:
-                            try:
-                                # ISO formatındaki zamanı python datetime nesnesine çeviriyoruz
-                                from datetime import datetime
-                                # '2026-08-25T07:15:12.420336+00:00' gibi yapıları anında çözer
-                                temiz_zaman = raw_time.replace("Z", "+00:00")
-                                dt = datetime.fromisoformat(temiz_zaman)
-                                
-                                # YENİ: UTC saatini bilgisayarın yerel saatine (örn: Türkiye UTC+3) çeviriyoruz
-                                dt_local = dt.astimezone() 
-                                
-                                tarih = dt_local.strftime("%Y-%m-%d") # Örn: 2026-08-25
-                                saat = dt_local.strftime("%H:%M:%S")  # Örn: 10:15:12 (3 saat eklenmiş hali)
-                            except Exception:
-                                # Eğer özel bir format olursa manuel parçalama devreye girsin
-                                if "T" in raw_time:
-                                    parts = raw_time.split("T")
-                                    tarih = parts[0]
-                                    saat = parts[1].split(".")[0].split("+")[0]
-                                else:
-                                    tarih = raw_time
-                                    
-                    # Kullanıcı, IP ve Durum Okuyucu
+                    if raw_time:
+                        dt_local = datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone()
+                        tarih, saat = dt_local.strftime("%Y-%m-%d"), dt_local.strftime("%H:%M:%S")
+                        
                     kullanici, ip, durum = "System", "-", "Bilgi"
                     if event_data is not None:
                         for data in event_data.findall(f'{ns}Data'):
-                            name = data.get('Name')
-                            val = data.text or ""
-                            if name in ['TargetUserName', 'SubjectUserName'] and val and val != "SYSTEM":
-                                kullanici = val
-                            elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-":
-                                ip = val
-                            elif name == 'NewProcessName':
-                                durum = val.split("\\")[-1]
+                            name, val = data.get('Name'), data.text or ""
+                            if name in ['TargetUserName', 'SubjectUserName'] and val and val != "SYSTEM": kullanici = val
+                            elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-": ip = val
+                            elif name == 'NewProcessName': durum = val.split("\\")[-1]
+                            
+                    gecici_liste.append((siralama_zamani, [tarih, saat, event_id, kullanici, ip, durum]))
+                except Exception:
+                    continue
+            
+            # 🎯 KESİN ÇÖZÜM: Zaman damgasına (ISO time) göre EN YENİ HER ZAMAN EN ÜSTTE olacak şekilde sırala
+            gecici_liste.sort(key=lambda x: x[0], reverse=False)
 
-                    # 6 Elemanlı Kusursuz Liste
-                    log_row = [tarih, saat, event_id, kullanici, ip, durum]
-                    logs.append(log_row)
-                    self.log_ready.emit(log_row, idx)
-                    self.msleep(1)
-
+            for idx, item in enumerate(gecici_liste):
+                self.log_ready.emit(item[1], idx)
+                
         except Exception as e:
-            print(f"EVTX ayrıştırma hatası: {e}")
-        return logs
+            print(f"Wevtutil hata: {e}")
+            
+        return logs_count
 
 class MainWindow(QMainWindow):
     def add_single_log_row_live(self, log, row_idx):
         if len(log) < 6: return
         tarih, saat, event_id, kullanici, ip, durum = log
         
+        if "🟢 CANLI" in str(event_id) or "⏳ BİLGİ" in str(event_id) or "HATA" in str(event_id):
+            self.log_table.insertRow(0)
+            for col_idx, data in enumerate(log):
+                hucre = QTableWidgetItem(str(data))
+                hucre.setBackground(QColor(0, 80, 0))
+                hucre.setForeground(QColor(255, 255, 255))
+                font = QFont(); font.setBold(True); hucre.setFont(font)
+                self.log_table.setItem(0, col_idx, hucre)
+            return
+
+        if not hasattr(self, 'failed_attempts'): self.failed_attempts = {}
+        if str(event_id) == "4624": self.failed_attempts[kullanici] = 0
+
         risk_skoru = 0
         tespit = "Normal Aktivite"
-        if "Administrator" in kullanici and event_id == "4672":
+        if "Administrator" in kullanici and str(event_id) == "4672":
             risk_skoru += 5
             tespit = "Kural 3: Şüpheli Yönetici Yetkisi Ataması"
-        elif event_id == "4688" and "cmd.exe" in durum:
+        elif str(event_id) == "4688" and "cmd.exe" in durum:
             risk_skoru += 10
             tespit = "Kural 4: Şüpheli İşlem"
-        elif event_id == "4625":
-            risk_skoru += 1
-            tespit = "Kural 2: Başarısız Giriş"
+        elif str(event_id) == "4625":
+            self.failed_attempts[kullanici] = self.failed_attempts.get(kullanici, 0) + 1
+            deneme_sayisi = self.failed_attempts[kullanici]
+            if deneme_sayisi >= 3:
+                risk_skoru += 20
+                tespit = f"Kural 1: Brute Force İhtimali ({deneme_sayisi}. Deneme)"
+            else:
+                risk_skoru += 1
+                tespit = f"Kural 2: Başarısız Giriş ({deneme_sayisi}. Deneme)"
 
         known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99", "185.220.101.5"]
         if ip in known_malicious_ips:
@@ -175,8 +216,10 @@ class MainWindow(QMainWindow):
 
         yazi_rengi = QColor(0, 0, 0)
         kalin_yazi = False
-        if "IOC MATCH" in tespit:
+        if "IOC MATCH" in tespit or risk_skoru >= 20:
             risk_seviyesi = "☠️ FATAL"
+            if not hasattr(self, 'current_fatal_alerts'): self.current_fatal_alerts = []
+            self.current_fatal_alerts.append(f"IP: {ip} - {tespit}")
             renk = QColor(0, 0, 0)
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
@@ -192,87 +235,83 @@ class MainWindow(QMainWindow):
         else:
             risk_seviyesi = "🔴 Critical"
             renk = QColor(255, 50, 50)
+            yazi_rengi = QColor(255, 255, 255)
+            kalin_yazi = True
 
-        self.log_table.insertRow(row_idx)
-        satir_verileri = [tarih, saat, event_id, kullanici, ip, durum, risk_seviyesi, tespit]
+        event_sozlugu = {
+            "4624": "Başarılı Oturum Açma", "4625": "Hatalı Şifre Denemesi", "4634": "Oturum Kapatıldı",
+            "4647": "Kullanıcı Çıkış Yaptı", "4672": "Özel Yetki (Admin) Kullanıldı", "4688": "Yeni Program/Komut Çalıştırıldı",
+            "4720": "Yeni Hesap Açıldı", "4722": "Hesap Aktif Hale Getirildi", "4724": "Şifre Sıfırlama İşlemi",
+            "4732": "Gruba Yeni Üye Eklendi", "4740": "Hesap Kilitlendi", "1102": "DİKKAT: Loglar Silindi!",
+            "5379": "Kayıtlı Şifrelere Erişildi"
+        }
+        
+        aciklama = event_sozlugu.get(str(event_id), "Standart Sistem İşlemi")
+        gosterilecek_event = f"{event_id} ({aciklama})"
+
+        # 🎯 KESİN ÇÖZÜM: Yeni gelen her log HER ZAMAN en üste (0. satıra) eklenir!
+        # Arka plandaki loglar normal sıralı geldiği için sayaç 1, 2, 3 diye tertemiz sayar,
+        # ekranda ise en güncel olan her zaman en tepede görünür.
+        target_row = 0
+        
+        self.log_table.insertRow(target_row) 
+        satir_verileri = [tarih, saat, gosterilecek_event, kullanici, ip, durum, risk_seviyesi, tespit]
+        
         for col_idx, data in enumerate(satir_verileri):
-            hucre = QTableWidgetItem(data)
+            hucre = QTableWidgetItem(str(data))
             hucre.setBackground(renk)
             hucre.setForeground(yazi_rengi)
             if kalin_yazi:
-                kalin_font = QFont()
-                kalin_font.setBold(True)
-                hucre.setFont(kalin_font)
-            self.log_table.setItem(row_idx, col_idx, hucre)
+                kalin_font = QFont(); kalin_font.setBold(True); hucre.setFont(kalin_font)
+            self.log_table.setItem(target_row, col_idx, hucre) 
 
-        # Sütunların içeriği tam sığması için genişliği otomatik ayarlıyoruz
-        self.log_table.resizeColumnToContents(1) # Özellikle 'Saat' sütunu (1. indis) için
+        if row_idx > 0 and row_idx % 200 == 0:
+            QCoreApplication.processEvents()
 
     def __init__(self):
         super().__init__()
-        
         self.setWindowTitle("WinLogSentinel - Security Log Analyzer (Ultimate Edition)")
         self.resize(1100, 750) 
-
-        # --- YAPAY ZEKA (AI) MOTORU BAŞLATILIYOR ---
-        # contamination=0.05 demek: "Gördüğün verilerin en sıradışı %5'ini anomali (saldırı) olarak işaretle"
-        self.ai_model = IsolationForest(contamination=0.05, random_state=42)
-        self.ai_data_buffer = [] # AI'ın öğrenmesi için geçmiş saatleri tutacağımız liste
-        self.ai_is_trained = False # Modelin eğitilip eğitilmediğini kontrol eden bayrak
         
         ekran = QApplication.primaryScreen().availableGeometry()
-        x = (ekran.width() - self.width()) // 2
-        y = (ekran.height() - self.height()) // 2
-        self.move(x, y)
+        self.move((ekran.width() - self.width()) // 2, (ekran.height() - self.height()) // 2)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # 1. DASHBOARD PANELİ (HEPSİ İNTERAKTİF)
         self.dashboard_group = QGroupBox("📊 Güvenlik Dashboard (Detaylar için metinlere tıklayabilirsiniz)")
         dashboard_layout = QGridLayout() 
 
         self.lbl_total = ClickableLabel("Toplam Olay: 0")
         self.lbl_critical = ClickableLabel("🔴 Kritik Olay: 0")
         self.lbl_risk_dist = ClickableLabel("📊 Risk Dağılımı: 🟢 Low | 🟡 Medium | 🟠 High | 🔴 Critical | ☠️ Fatal")
-        
         self.lbl_top_ip = ClickableLabel("🌐 En Aktif IP: -")
         self.lbl_top_user = ClickableLabel("👤 En Aktif Kullanıcı: -")
         self.lbl_top_event_id = ClickableLabel("🆔 En Sık Event ID: -")
 
-        # Tıklanma aksiyonları (Hızlı Filtreleme)
         self.lbl_total.clicked.connect(lambda: self.clear_filter())
         self.lbl_critical.clicked.connect(lambda: self.quick_filter("Risk Seviyesi", "Critical"))
-        self.lbl_risk_dist.clicked.connect(self.select_risk_level_dialog) # Risk dağılımı için açılır menü
+        self.lbl_risk_dist.clicked.connect(self.select_risk_level_dialog) 
         self.lbl_top_ip.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_ip, "IP Adresi", "En Aktif IP: "))
         self.lbl_top_user.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_user, "Kullanıcı", "En Aktif Kullanıcı: "))
         self.lbl_top_event_id.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_event_id, "Event ID", "En Sık Event ID: "))
 
-        font = QFont()
-        font.setBold(True)
-        font.setPointSize(11)
-
-        labels = [self.lbl_total, self.lbl_critical, self.lbl_risk_dist, 
-                  self.lbl_top_ip, self.lbl_top_user, self.lbl_top_event_id]
-        
+        font = QFont(); font.setBold(True); font.setPointSize(11)
+        labels = [self.lbl_total, self.lbl_critical, self.lbl_risk_dist, self.lbl_top_ip, self.lbl_top_user, self.lbl_top_event_id]
         for lbl in labels:
             lbl.setFont(font)
-            if isinstance(lbl, ClickableLabel):
-                lbl.setStyleSheet("color: #4a90e2; text-decoration: underline; cursor: pointer;")
+            lbl.setStyleSheet("color: #4a90e2; text-decoration: underline; cursor: pointer;")
             
         dashboard_layout.addWidget(self.lbl_total, 0, 0)
         dashboard_layout.addWidget(self.lbl_critical, 0, 1)
         dashboard_layout.addWidget(self.lbl_risk_dist, 0, 2)
-        
         dashboard_layout.addWidget(self.lbl_top_ip, 1, 0)
         dashboard_layout.addWidget(self.lbl_top_user, 1, 1)
         dashboard_layout.addWidget(self.lbl_top_event_id, 1, 2)
-
         self.dashboard_group.setLayout(dashboard_layout)
         main_layout.addWidget(self.dashboard_group) 
 
-        # 2. BUTONLAR
         button_layout = QHBoxLayout()
         self.btn_load_log = QPushButton("📁 Log Dosyası Yükle (.csv / .evtx)")
         self.btn_load_log.setMinimumHeight(40)
@@ -291,16 +330,12 @@ class MainWindow(QMainWindow):
         self.btn_export.setEnabled(False)
         button_layout.addWidget(self.btn_export)
         
-        # --- YENİ EKLENEN BUTON BURADA ---
         self.btn_manage_blocks = QPushButton("🛡️ Güvenlik Duvarı & Whitelist")
         self.btn_manage_blocks.setMinimumHeight(40)
         self.btn_manage_blocks.clicked.connect(self.show_blocked_ips_manager)
         button_layout.addWidget(self.btn_manage_blocks)
-        # ---------------------------------
-        
         main_layout.addLayout(button_layout)
 
-        # 2.5 IOC MOD SEÇİMİ (Yerel vs VirusTotal)
         ioc_layout = QHBoxLayout()
         ioc_layout.addWidget(QLabel("🛡️ IOC Tehdit İstihbarat Modu:"))
         self.combo_ioc_mode = QComboBox()
@@ -309,7 +344,6 @@ class MainWindow(QMainWindow):
         ioc_layout.addWidget(self.combo_ioc_mode)
         main_layout.addLayout(ioc_layout)
 
-        # 3. FİLTRELEME
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(QLabel("Filtrele:"))
         self.filter_column = QComboBox()
@@ -327,23 +361,18 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.btn_clear_filter)
         main_layout.addLayout(filter_layout) 
 
-        # 4. TABLO (Sütun sayısı 8 oldu)
         self.log_table = QTableWidget()
         self.log_table.setColumnCount(8)
         self.log_table.setHorizontalHeaderLabels(["Tarih", "Saat", "Event ID", "Kullanıcı", "IP Adresi", "Durum", "Risk Seviyesi", "Tespit Nedeni"])
-        
-        # Sütun genişliklerini kesilmeyecek şekilde ayarlıyoruz
-        self.log_table.setColumnWidth(0, 100) # Tarih sütunu
-        self.log_table.setColumnWidth(1, 110) # Saat sütunu (85'ten 110'a çıkardık, artık kesilmeyecek)
-        self.log_table.setColumnWidth(2, 80)  # Event ID
-        self.log_table.setColumnWidth(3, 120) # Kullanıcı
-        self.log_table.setColumnWidth(4, 130) # IP Adresi
-        self.log_table.setColumnWidth(5, 140) # Durum
-        self.log_table.setColumnWidth(6, 110) # Risk Seviyesi
-        # Saat sütununun akış sırasında asla daralmasını ve kesilmesini engelliyoruz
+        self.log_table.setColumnWidth(0, 100) 
+        self.log_table.setColumnWidth(1, 110) 
+        self.log_table.setColumnWidth(2, 220)  
+        self.log_table.setColumnWidth(3, 120) 
+        self.log_table.setColumnWidth(4, 130) 
+        self.log_table.setColumnWidth(5, 140) 
+        self.log_table.setColumnWidth(6, 110) 
         self.log_table.horizontalHeader().resizeSection(1, 110)
         self.log_table.horizontalHeader().setMinimumSectionSize(110)
-        
         self.log_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         main_layout.addWidget(self.log_table)
         self.log_table.cellDoubleClicked.connect(self.show_event_details)
@@ -351,10 +380,8 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_file_update)
         self.current_file = None
-        self.last_mod_time = 0
         self.last_log_count = 0 
 
-    # --- AKILLI FİLTRELEME FONKSİYONLARI ---
     def quick_filter(self, column, value):
         self.filter_column.setCurrentText(column)
         self.filter_input.setText(value)
@@ -363,57 +390,36 @@ class MainWindow(QMainWindow):
     def filter_by_label_text(self, label, column_name, prefix_text):
         import re
         text = label.text()
-        
-        # 1. HTML etiketlerini ve görünmez kodları tamamen temizle
         clean_text = re.sub('<[^<]+>', '', text)
-        
-        # 2. Temiz metin içindeki iki noktadan sonrasını (gerçek değeri) al
         if ":" in clean_text:
             val = clean_text.split(":", 1)[1].strip()
-            
-            # Eğer değer boş değilse ve "-" değilse tabloyu anında filtrele
-            if val and val != "-":
-                self.quick_filter(column_name, val)
+            if val and val != "-": self.quick_filter(column_name, val)
 
     def select_risk_level_dialog(self):
         risk_seviyeleri = ["Low", "Medium", "High", "Critical", "Fatal"]
         secim, ok = QInputDialog.getItem(self, "Risk Seviyesi Seç", "Filtrelemek istediğiniz risk seviyesini seçin:", risk_seviyeleri, 0, False)
-        if ok and secim:
-            self.quick_filter("Risk Seviyesi", secim)
+        if ok and secim: self.quick_filter("Risk Seviyesi", secim)
 
-    # BÜTÜN DASHBOARD'U TABLODAN OKUYUP GÜNCELLEYEN FONKSİYON
     def update_dashboard(self):
         row_count = self.log_table.rowCount()
-        
-        # Eğer tablo boşsa dashboard'u sıfırla
-        if row_count == 0:
-            return
+        if row_count == 0: return
             
         risk_sayilari = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "FATAL": 0}
-        ip_sayilari = {}
-        user_sayilari = {}
-        event_sayilari = {}
-        kritik_sayisi = 0
+        ip_sayilari, user_sayilari, event_sayilari, kritik_sayisi = {}, {}, {}, 0
 
-        # Tablodaki tüm satırları tek tek okuyup kesin sonuçları hesaplıyoruz
         for row in range(row_count):
+            if self.log_table.isRowHidden(row): continue
             event_id = self.log_table.item(row, 2).text() if self.log_table.item(row, 2) else ""
             user = self.log_table.item(row, 3).text() if self.log_table.item(row, 3) else ""
             ip = self.log_table.item(row, 4).text() if self.log_table.item(row, 4) else ""
             risk = self.log_table.item(row, 6).text() if self.log_table.item(row, 6) else ""
             
-            # Risk Dağılımını Say
             if "Low" in risk: risk_sayilari["Low"] += 1
             elif "Medium" in risk: risk_sayilari["Medium"] += 1
             elif "High" in risk: risk_sayilari["High"] += 1
-            elif "Critical" in risk: 
-                risk_sayilari["Critical"] += 1
-                kritik_sayisi += 1
-
-            elif "FATAL" in risk or "Fatal" in risk: 
-                risk_sayilari["FATAL"] += 1
+            elif "Critical" in risk: risk_sayilari["Critical"] += 1; kritik_sayisi += 1
+            elif "FATAL" in risk or "Fatal" in risk: risk_sayilari["FATAL"] += 1; kritik_sayisi += 1
                 
-            # İstatistikler için En Çok Tekrar Edenleri Say
             if ip and ip != "-": ip_sayilari[ip] = ip_sayilari.get(ip, 0) + 1
             if user and user != "-": user_sayilari[user] = user_sayilari.get(user, 0) + 1
             if event_id and event_id != "-": event_sayilari[event_id] = event_sayilari.get(event_id, 0) + 1
@@ -422,56 +428,43 @@ class MainWindow(QMainWindow):
         en_aktif_user = max(user_sayilari, key=user_sayilari.get) if user_sayilari else "-"
         en_sik_event = max(event_sayilari, key=event_sayilari.get) if event_sayilari else "-"
 
-        # 1. SÜTUN (Mavi Tonları - Bilgi ve Ağ)
         self.lbl_total.setText(f'<span style="color: #66b3ff;">Toplam Olay: {row_count}</span>')
         self.lbl_top_ip.setText(f'<span style="color: #66b3ff;">🌐 En Aktif IP: {en_aktif_ip}</span>')
-        
-        # 2. SÜTUN (Sıcak Tonlar - Uyarı ve Aktör)
         self.lbl_critical.setText(f'<span style="color: #ff6666;">🔴 Kritik Olay: {kritik_sayisi}</span>')
         self.lbl_top_user.setText(f'<span style="color: #ffb74d;">👤 En Aktif Kullanıcı: {en_aktif_user}</span>')
-        
-        # 3. SÜTUN (Mor ve Karışık Tonlar - Olay Detayları)
         self.lbl_risk_dist.setText(f'📊 Risk Dağılımı: 🟢 {risk_sayilari["Low"]} | 🟡 {risk_sayilari["Medium"]} | 🟠 {risk_sayilari["High"]} | 🔴 {risk_sayilari["Critical"]} | ☠️ {risk_sayilari["FATAL"]}')
-        self.lbl_top_event_id.setText(f'<span style="color: #b366ff;">🆔 En Sık Event ID: {en_sik_event}</span>')
+        self.lbl_top_event_id.setText(f'<span style="color: #b366ff;">🆔 En Sık Event ID: {en_sik_event.split(" ")[0]}</span>')
 
     def load_log_file(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.stop_analysis_worker()
             return
 
-        # 1. Önce dosya seçme penceresini açıyoruz (pencere hemen kapanacak)
         file_path, _ = QFileDialog.getOpenFileName(self, "Log Dosyası Seç", "", "Desteklenen Loglar (*.csv *.evtx);;CSV Files (*.csv);;EVTX Files (*.evtx)")
         
-        # 2. Eğer kullanıcı dosya seçtiyse devam ediyoruz
         if file_path:
-            append_mode = False
-            
-            # 3. Dosya seçildikten SONRA tabloda veri var mı diye soruyoruz
-            if self.log_table.rowCount() > 0:
+            scan_mode = "gecmis"
+            if file_path.endswith('.evtx'):
                 cevap = QMessageBox.question(
                     self, 
-                    "Log Birleştirme Modu", 
-                    "Tabloda halihazırda yüklenmiş loglar var.\n\nYeni yüklenen dosyayı mevcut logların **üzerine mi eklemek** istiyorsunuz, yoksa **tabloyu temizleyip yenisini mi** getirmek istiyorsunuz?\n\n(Evet = Üzerine Ekle, Hayır = Temizle ve Başla)",
+                    "Tarama Modu Seçimi", 
+                    "Canlı Windows Güvenlik Motoru (wevtutil) kullanılsın mı?\n\n"
+                    "EVET: Doğrudan Windows RAM/Canlı günlüğünden en son olayları anında çek (Önerilen)\n"
+                    "HAYIR: Klasik dosya tarama modunu kullan",
                     QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
                     QMessageBox.Yes
                 )
-                
-                if cevap == QMessageBox.Cancel:
-                    return
-                elif cevap == QMessageBox.Yes:
-                    append_mode = True 
-                else:
-                    append_mode = False 
+                if cevap == QMessageBox.Cancel: return
+                elif cevap == QMessageBox.Yes: scan_mode = "wevtutil_canli"
 
             self.current_file = file_path
-            self.last_mod_time = os.path.getmtime(file_path)
             self.btn_export.setEnabled(True)
             self.btn_live.setEnabled(True)
-            self.last_log_count = 0 
+            self.log_table.setRowCount(0)
+            self.last_log_count = 0
+            self.process_file(file_path, show_popup=True, scan_mode=scan_mode)
 
-            self.process_file(file_path, show_popup=True, is_live_update=False, append=append_mode)
-
-    def process_file(self, file_path, show_popup=False, is_live_update=False, append=False):
+    def process_file(self, file_path, show_popup=False, scan_mode="gecmis"):
         ioc_mode = self.combo_ioc_mode.currentText() if hasattr(self, 'combo_ioc_mode') else "Yerel"
         known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99", "185.220.101.5"]
         vt_api_key = "3573d24e8fb924cc5180ed5655b31717aa405f6f86c2e2e295b217050a67b7e1"
@@ -479,773 +472,163 @@ class MainWindow(QMainWindow):
         self.btn_load_log.setText("⏹️ Akışı Durdur (İptal Et)")
         self.btn_load_log.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold;")
         
-        try:
-            self.btn_load_log.clicked.disconnect()
-        except RuntimeError:
-            pass
+        try: self.btn_load_log.clicked.disconnect()
+        except RuntimeError: pass
         self.btn_load_log.clicked.connect(self.stop_analysis_worker)
         
-        if not append:
-            self.log_table.setRowCount(0)
-
-        self.current_fatal_alerts = [] # Yeni dosya yüklendiğinde eski uyarı listesini temizle
-        self.worker = LogWorker(file_path, ioc_mode, known_malicious_ips, vt_api_key)
-        self.worker = LogWorker(file_path, ioc_mode, known_malicious_ips, vt_api_key)
+        self.current_fatal_alerts = [] 
+        self.worker = LogWorker(file_path, ioc_mode, known_malicious_ips, vt_api_key, scan_mode, self.last_log_count)
         self.worker.log_ready.connect(self.add_single_log_row_live)
-        self.worker.finished.connect(lambda logs: self.on_analysis_finished(logs, show_popup, is_live_update))
+        self.worker.finished.connect(lambda count: self.on_analysis_finished(count, show_popup, scan_mode))
         self.worker.error.connect(self.on_analysis_error)
         self.worker.start()
 
-    def add_single_log_row_live(self, log, row_idx):
-        if len(log) < 5: return
-        
-        if len(log) == 6:
-            tarih, saat, event_id, kullanici, ip, durum = log
-        else:
-            zaman_str = str(log[0])
-            if " " in zaman_str:
-                parca = zaman_str.split(" ")
-                tarih, saat = parca[0], parca[1]
-            else:
-                tarih, saat = "-", zaman_str
-            event_id = log[1]
-            kullanici = log[2]
-            ip = log[3]
-            durum = log[4]
-        
-        # En başta risk skoru ve tespiti sıfırdan başlatıyoruz ki hata vermesin
-        risk_skoru = 0
-        tespit = "Normal Aktivite"
-        
-        target_row = self.log_table.rowCount()
-
-        # YENİ: BRUTE FORCE İÇİN HAFIZA (STATE) OLUŞTUR
-        if not hasattr(self, 'failed_attempts'):
-            self.failed_attempts = {}
-
-        # --- YENİ KURAL: BAŞARILI GİRİŞTE SAYACI SIFIRLA ---
-        if str(event_id) == "4624":
-            self.failed_attempts[kullanici] = 0
-
-        if "Administrator" in str(kullanici) and str(event_id) == "4672":
-            risk_skoru += 5
-            tespit = "Kural 3: Şüpheli Yönetici Yetkisi Ataması"
-        elif str(event_id) == "4688" and "cmd.exe" in str(durum):
-            risk_skoru += 16
-            tespit = "Kural 4: Şüpheli İşlem"
-        elif str(event_id) == "4625":
-            self.failed_attempts[kullanici] = self.failed_attempts.get(kullanici, 0) + 1
-            deneme_sayisi = self.failed_attempts[kullanici]
-            
-            if deneme_sayisi >= 3:
-                risk_skoru += 20
-                tespit = f"Kural 1: Brute Force İhtimali ({deneme_sayisi}. Deneme)"
-            else:
-                risk_skoru += 1
-                tespit = f"Kural 2: Başarısız Giriş ({deneme_sayisi}. Deneme)"
-
-        # 🧠 YAPAY ZEKA (AI) ANOMALİ TESPİT MOTORU
-        if str(event_id) == "4624":
-            try:
-                saat_sadece = int(saat.split(":")[0]) if ":" in saat else 12
-                self.ai_data_buffer.append([saat_sadece])
-                
-                if len(self.ai_data_buffer) == 30:
-                    self.ai_model.fit(self.ai_data_buffer)
-                    self.ai_is_trained = True
-                
-                if self.ai_is_trained:
-                    ai_sonuc = self.ai_model.predict([[saat_sadece]])[0]
-                    if ai_sonuc == -1:
-                        risk_skoru += 25
-                        tespit = "🧠 AI TESPİTİ: Alışılmadık Saatte Davranış Anomalisi!"
-            except Exception as e:
-                pass
-
-        known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99", "185.220.101.5"]
-        if str(ip).strip() in known_malicious_ips:
-            risk_skoru += 50
-            tespit = "🚨 IOC MATCH DETECTED (Zararlı IP Tespiti)"
-
-        yazi_rengi = QColor(0, 0, 0)
-        kalin_yazi = False
-        
-        if "IOC MATCH" in tespit or risk_skoru >= 20:
-            risk_seviyesi = "☠️ FATAL"
-            if hasattr(self, "risk_counts"): self.risk_counts["Fatal"] += 1
-            if hasattr(self, "critical_events"): self.critical_events += 1
-            renk = QColor(0, 0, 0)
-            yazi_rengi = QColor(255, 255, 255)
-            kalin_yazi = True
-
-            if hasattr(self, 'current_fatal_alerts') and ip and ip != "-":
-                mesaj = f"🔴 <b>[TEHDİT]</b> IP: {ip} &nbsp;&nbsp;(Olay: {event_id}, Satır: {target_row + 1})"
-                if mesaj not in self.current_fatal_alerts:
-                    self.current_fatal_alerts.append(mesaj)
-            
-            if hasattr(self, 'block_ip_in_firewall') and ip and ip != "-":
-                beyaz_liste = getattr(self, 'unblocked_ips', set())
-                if ip in beyaz_liste:
-                    tespit += " [✅ İZİN VERİLDİ - Pas geçildi]"
-                else:
-                    self.block_ip_in_firewall(ip, sessiz_mod=True)
-                    tespit += " [⛔ OTO-ENGELLENDİ]"
-                    
-        elif risk_skoru == 0:
-            risk_seviyesi = "🟢 Low"
-            if hasattr(self, "risk_counts"): self.risk_counts["Low"] += 1
-            renk = QColor(100, 255, 100)
-        elif 1 <= risk_skoru <= 4:
-            risk_seviyesi = "🟡 Medium"
-            if hasattr(self, "risk_counts"): self.risk_counts["Medium"] += 1
-            renk = QColor(255, 255, 100)
-        elif 5 <= risk_skoru <= 15:
-            risk_seviyesi = "🟠 High"
-            if hasattr(self, "risk_counts"): self.risk_counts["High"] += 1
-            renk = QColor(255, 165, 0)
-        else:
-            risk_seviyesi = "🔴 Critical"
-            if hasattr(self, "risk_counts"): self.risk_counts["Critical"] += 1
-            if hasattr(self, "critical_events"): self.critical_events += 1
-            renk = QColor(255, 50, 50)
-            yazi_rengi = QColor(255, 255, 255)
-            kalin_yazi = True
-
-        # --- TABLOYA YAZMADAN ÖNCE EVENT ID AÇIKLAMALARI EKLİYORUZ ---
-        event_sozlugu = {
-            "4624": "Başarılı Oturum Açma",
-            "4625": "Hatalı Şifre Denemesi",
-            "4634": "Oturum Kapatıldı",
-            "4647": "Kullanıcı Çıkış Yaptı",
-            "4672": "Özel Yetki (Admin) Kullanıldı",
-            "4688": "Yeni Program/Komut Çalıştırıldı",
-            "4720": "Yeni Hesap Açıldı",
-            "4722": "Hesap Aktif Hale Getirildi",
-            "4724": "Şifre Sıfırlama İşlemi",
-            "4732": "Gruba Yeni Üye Eklendi",
-            "4740": "Hesap Kilitlendi",
-            "1102": "DİKKAT: Loglar Silindi!",
-            "5379": "Kayıtlı Şifrelere Erişildi"
-        }
-        
-        # Eğer listede yoksa "Diğer Olay" yerine daha mantıklı bir şey yazsın
-        aciklama = event_sozlugu.get(str(event_id), "Standart Sistem İşlemi")
-        gosterilecek_event = f"{event_id} ({aciklama})"
-
-        # Sadece burada bir tane insertRow var, başka hiçbir yerde yok!
-        self.log_table.insertRow(target_row)
-        
-        satir_verileri = [tarih, saat, gosterilecek_event, kullanici, ip, durum, risk_seviyesi, tespit]
-        
-        for col_idx, data in enumerate(satir_verileri):
-            hucre = QTableWidgetItem(str(data))
-            hucre.setBackground(renk)
-            hucre.setForeground(yazi_rengi)
-            if kalin_yazi:
-                kalin_font = QFont()
-                kalin_font.setBold(True)
-                hucre.setFont(kalin_font)
-            self.log_table.setItem(target_row, col_idx, hucre)
-            
-        if hasattr(self, 'update_dashboard'):
-            self.update_dashboard()
-            
-        # Akış sırasında saat sütununun genişliğini her satırda garantiye alıyoruz
-        self.log_table.setColumnWidth(1, 110)
-                
     def stop_analysis_worker(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.terminate()
             self.worker.wait()
-        
         self.reset_load_button()
-        QMessageBox.information(self, "İptal Edildi", "Log analizi ve canlı akış kullanıcı tarafından durduruldu.")
+        QMessageBox.information(self, "İptal Edildi", "Log analizi durduruldu.")
 
     def reset_load_button(self):
         self.btn_load_log.setText("📁 Log Dosyası Yükle (.csv / .evtx)")
         self.btn_load_log.setStyleSheet("")
-        try:
-            self.btn_load_log.clicked.disconnect()
-        except RuntimeError:
-            pass
-        # Butonu tekrar normal dosya yükleme fonksiyonuna bağlıyoruz
+        try: self.btn_load_log.clicked.disconnect()
+        except RuntimeError: pass
         self.btn_load_log.clicked.connect(self.load_log_file)
         self.btn_load_log.setEnabled(True)
 
-    def on_analysis_finished(self, logs, show_popup, is_live_update):
+    def on_analysis_finished(self, total_count, show_popup, scan_mode):
         self.reset_load_button()
         self.log_table.resizeColumnsToContents()
-        self.last_log_count = len(logs)
+        if total_count > 0: self.last_log_count = total_count
+        self.update_dashboard()
         
-        # --- EKSİK OLAN FATAL POP-UP UYARISI BURAYA GELDİ ---
-        if hasattr(self, 'current_fatal_alerts') and self.current_fatal_alerts and show_popup:
-            html_kayitlar = "<br>".join(self.current_fatal_alerts)
-            html_mesaj = f"<h3>🚨 DİKKAT! Log dosyasında Kritik (FATAL) seviyede tehditler tespit edildi!</h3><b>Bulunan Kayıtlar:</b><br><br>{html_kayitlar}<br><br><i>Sistem bu IP'leri otomatik olarak engellemiş olabilir. Lütfen detayları tablodan inceleyin.</i>"
+        if scan_mode == "wevtutil_canli" and not self.timer.isActive():
+            self.toggle_live_sync() # Otomatik olarak canlı izleme döngüsünü başlatır
             
+        if hasattr(self, 'current_fatal_alerts') and self.current_fatal_alerts and show_popup:
+            unique_alerts = list(set(self.current_fatal_alerts))
+            html_kayitlar = "<br>".join(unique_alerts)
+            html_mesaj = f"<h3>🚨 DİKKAT! Log dosyasında Kritik (FATAL) seviyede tehditler tespit edildi!</h3><b>Bulunan Kayıtlar:</b><br><br>{html_kayitlar}"
             uyari = QMessageBox(self)
             uyari.setWindowTitle("KRİTİK GÜVENLİK UYARISI")
             uyari.setIcon(QMessageBox.Critical)
             uyari.setText(html_mesaj)
-            
-            # Uyarıyı tam ekranın ortasında çıkart
             ekran = QApplication.primaryScreen().availableGeometry()
-            x = (ekran.width() - 400) // 2
-            y = (ekran.height() - 200) // 2
-            uyari.move(x, y)
-            
+            uyari.move((ekran.width() - 400) // 2, (ekran.height() - 200) // 2)
             uyari.exec()
-            
-            self.current_fatal_alerts = [] # Uyarıyı gösterdikten sonra listeyi sıfırla
-        
+            self.current_fatal_alerts = []
+
     def on_analysis_error(self, err_msg):
         self.reset_load_button()
-        QMessageBox.warning(self, "Okuma Hatası", f"Dosya işlenirken hata oluştu:\n{err_msg}")
-
-    def parse_evtx(self, file_path):
-        logs = []
-        ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
-        try:
-            with evtx.Evtx(file_path) as evtx_file:
-                for record in evtx_file.records():
-                    root = ET.fromstring(record.xml())
-                    system = root.find(f'{ns}System')
-                    event_data = root.find(f'{ns}EventData')
-                    if system is None: continue
-                    event_id_elem = system.find(f'{ns}EventID')
-                    event_id = event_id_elem.text if event_id_elem is not None else ""
-
-                   # 1. KUSURSUZ TARİH VE SAAT AYIRICI
-                    tarih, saat = "-", "-"
-                    time_elem = system.find(f'{ns}TimeCreated')
-                    if time_elem is not None:
-                        raw_time = time_elem.get('SystemTime')
-                        if not raw_time and time_elem.text:
-                            raw_time = time_elem.text.strip()
-                            
-                        if raw_time:
-                            if "T" in raw_time:
-                                parts = raw_time.split("T")
-                                tarih = parts[0] # Örn: 2026-08-25
-                                saat = parts[1].split(".")[0] # Örn: 08:25:00
-                            else:
-                                tarih = raw_time
-
-                    # 2. KULLANICI, IP (GENİŞLETİLMİŞ) VE DURUM OKUYUCU
-                    kullanici, ip, durum = "System", "-", "Bilgi"
-                    if event_data is not None:
-                        for data in event_data.findall(f'{ns}Data'):
-                            name = data.get('Name')
-                            val = data.text or ""
-                            if name in ['TargetUserName', 'SubjectUserName'] and val and val != "SYSTEM":
-                                kullanici = val
-                            # IP adresini ve alternatif ağ alanlarını yakalıyoruz
-                            elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-":
-                                ip = val
-                            elif name == 'NewProcessName':
-                                durum = val.split("\\")[-1] 
-
-                    logs.append([tarih, saat, event_id, kullanici, ip, durum])
-
-        except Exception as e:
-            print(f"EVTX ayrıştırma hatası: {e}")
-        return logs
+        QMessageBox.warning(self, "Okuma Hatası", f"İşlem sırasında hata oluştu:\n{err_msg}")
 
     def toggle_live_sync(self):
         if self.timer.isActive():
             self.timer.stop()
             self.btn_live.setText("▶️ Canlı İzlemeyi Başlat (Live Sync)")
             self.btn_live.setStyleSheet("")
-            
-            # Kapatıldığında çıkan uyarı penceresi
-            uyari = QMessageBox(self)
-            uyari.setWindowTitle("Live Sync Durduruldu")
-            uyari.setIcon(QMessageBox.Warning)
-            uyari.setText("Canlı izleme sonlandırıldı. Log dosyası artık arka planda dinlenmiyor.")
-            
-            ekran = QApplication.primaryScreen().availableGeometry()
-            x = (ekran.width() - 400) // 2
-            y = (ekran.height() - 200) // 2
-            uyari.move(x, y)
-            uyari.exec()
+            QMessageBox.warning(self, "Live Sync Durduruldu", "Canlı izleme sonlandırıldı.")
         else:
-            self.timer.start(2000) 
+            self.timer.start(3000) # Her 3 saniyede bir wevtutil üzerinden canlı RAM'i tarar
             self.btn_live.setText("⏹ Canlı İzleme Aktif (Sistem Dinleniyor...)")
             self.btn_live.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
-            
-            # Açıldığında çıkan uyarı penceresi
-            uyari = QMessageBox(self)
-            uyari.setWindowTitle("Live Sync Aktif")
-            uyari.setIcon(QMessageBox.Information)
-            uyari.setText("Canlı izleme başlatıldı. Log dosyasına yeni bir kayıt düştüğünde tablo otomatik olarak güncellenecektir.")
-            
-            ekran = QApplication.primaryScreen().availableGeometry()
-            x = (ekran.width() - 400) // 2
-            y = (ekran.height() - 200) // 2
-            uyari.move(x, y)
-            uyari.exec()
+            QMessageBox.information(self, "Live Sync Aktif", "Canlı izleme başlatıldı. Yeni bir giriş/hata yapıldığında otomatik düşecektir.")
 
     def check_file_update(self):
-        if self.current_file and os.path.exists(self.current_file):
-            current_mod_time = os.path.getmtime(self.current_file)
-            if current_mod_time > self.last_mod_time:
-                self.last_mod_time = current_mod_time
-                self.process_file(self.current_file, show_popup=True, is_live_update=True)
-
-    def analyze_and_display(self, logs, show_popup=True, is_live_update=False):
-        failed_attempts_by_ip = {}
-        user_event_history = {} 
-        
-        # 1. Kullanıcının Arayüzden Seçtiği IOC Modunu Al
-        ioc_mode = self.combo_ioc_mode.currentText() if hasattr(self, 'combo_ioc_mode') else "Yerel"
-        known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99"]
-        
-        def check_virustotal_api(ip_address):
-            import requests
-            API_KEY = "3573d24e8fb924cc5180ed5655b31717aa405f6f86c2e2e295b217050a67b7e1"
-            
-            try:
-                print(f"[🌐] VirusTotal API'ye canlı sorgu atılıyor: {ip_address}...")
-                headers = {"x-apikey": API_KEY}
-                url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip_address}"
-                response = requests.get(url, headers=headers, timeout=3)
-                
-                print(f"[🌐] VirusTotal Yanıt Kodu: {response.status_code}")
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    stats = data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
-                    malicious_count = stats.get("malicious", 0)
-                    print(f"[🌐] VT Analiz Sonucu -> Zararlı Sayısı: {malicious_count}")
-                    if malicious_count > 0:
-                        return True
-            except Exception as e:
-                print(f"[!] VT Bağlantı Hatası: {e}")
-                pass
-                
-            return ip_address in known_malicious_ips # Hata veya temiz çıkma durumunda yerel listeye fallback yapar
-        
-        ioc_detected = False
-        new_ioc_found = False 
-        ioc_details = [] 
-        total_events = len(logs)
-        critical_events = 0
-        all_ips = []
-        all_users = []
-        all_event_ids = []
-        risk_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "Fatal": 0}
-        
-        for row_idx, log in enumerate(logs):
-            if len(log) < 5: continue 
-            if len(log) == 6:
-                tarih, saat, event_id, kullanici, ip, durum = log
-            else:
-                tarih, saat, event_id, kullanici, ip, durum = "-", log[0], log[1], log[2], log[3], log[4]
-
-            all_ips.append(ip)
-            all_users.append(kullanici)
-            all_event_ids.append(event_id)
-            if kullanici not in user_event_history:
-                user_event_history[kullanici] = []
-            user_event_history[kullanici].append(event_id)
-            
-            risk_skoru = 0
-            tespit = "Normal Aktivite"
-            if "Administrator" in kullanici and event_id == "4672":
-                risk_skoru += 5
-                tespit = "Kural 3: Şüpheli Yönetici Yetkisi Ataması"
-            if event_id == "4688" and "cmd.exe" in durum:
-                risk_skoru += 10
-                tespit = "Kural 4: Şüpheli İşlem (Zararlı Parent Process)"
-            saat_dilimi = int(saat.split(":")[0]) if ":" in saat else 12
-            if event_id == "4624" and (saat_dilimi < 6):
-                risk_skoru += 5
-                tespit = "Kural 5: Mesai Dışı Beklenmeyen Giriş"
-            if event_id == "4625":
-                risk_skoru += 1
-                failed_attempts_by_ip[ip] = failed_attempts_by_ip.get(ip, 0) + 1
-                deneme_sayisi = failed_attempts_by_ip[ip]
-                if deneme_sayisi >= 3: 
-                    risk_skoru += 20
-                    tespit = f"Kural 1: Brute Force İhtimali ({deneme_sayisi}. Deneme)"
-                else:
-                    tespit = "Kural 2: Başarısız Giriş"
-            
-            # IOC Kontrolü (Moda göre Yerel veya Online)
-            is_malicious = False
-            if "VirusTotal" in ioc_mode:
-                is_malicious = check_virustotal_api(ip)
-            else:
-                is_malicious = (ip in known_malicious_ips)
-
-            if is_malicious:
-                risk_skoru += 50 
-                tespit = "🚨 IOC MATCH DETECTED (Zararlı IP Tespiti)"
-                ioc_detected = True
-                if is_live_update:
-                    if row_idx >= self.last_log_count:
-                        ioc_details.append(f"<span style='color:red; font-size:14px;'>🔴 <b>[YENİ SIZMA]</b> IP: {ip} &nbsp;&nbsp;(Satır: {row_idx + 1})</span>")
-                        new_ioc_found = True
-                    else:
-                        ioc_details.append(f"<span style='color:gray;'>⚪ [Önceki Kayıt] IP: {ip} &nbsp;&nbsp;(Satır: {row_idx + 1})</span>")
-                else:
-                    ioc_details.append(f"🔴 IP: {ip} &nbsp;&nbsp;(Satır: {row_idx + 1})")
-                    new_ioc_found = True
-
-            if event_id == "4672":
-                gecmis = user_event_history[kullanici]
-                if "4625" in gecmis and "4624" in gecmis:
-                    risk_skoru += 30
-                    tespit = "🚨 Olay Korelasyonu: Possible Account Compromise! (Fail -> Success -> Admin)"
-            
-            yazi_rengi = QColor(0, 0, 0)
-            kalin_yazi = False
-            if "IOC MATCH" in tespit:
-                risk_seviyesi = "☠️ FATAL"
-                risk_counts["Fatal"] += 1 
-                critical_events += 1
-                renk = QColor(0, 0, 0) 
-                yazi_rengi = QColor(255, 255, 255) 
-                kalin_yazi = True
-            elif risk_skoru == 0:
-                risk_seviyesi = "🟢 Low"
-                risk_counts["Low"] += 1
-                renk = QColor(100, 255, 100) 
-            elif 1 <= risk_skoru <= 4:
-                risk_seviyesi = "🟡 Medium"
-                risk_counts["Medium"] += 1
-                renk = QColor(255, 255, 100) 
-            elif 5 <= risk_skoru <= 15:
-                risk_seviyesi = "🟠 High"
-                risk_counts["High"] += 1
-                renk = QColor(255, 165, 0) 
-            else:
-                risk_seviyesi = "🔴 Critical"
-                risk_counts["Critical"] += 1
-                critical_events += 1
-                renk = QColor(255, 50, 50) 
-            
-            self.log_table.insertRow(row_idx)
-            satir_verileri = [saat, event_id, kullanici, ip, durum, risk_seviyesi, tespit]
-            for col_idx, data in enumerate(satir_verileri):
-                hucre = QTableWidgetItem(data)
-                hucre.setBackground(renk)
-                hucre.setForeground(yazi_rengi)
-                if kalin_yazi:
-                    kalin_font = QFont()
-                    kalin_font.setBold(True)
-                    hucre.setFont(kalin_font)
-                self.log_table.setItem(row_idx, col_idx, hucre)
-        
-        self.log_table.resizeColumnsToContents()
-        self.lbl_total.setText(f"Toplam Olay: {total_events}")
-        self.lbl_critical.setText(f"🔴 Kritik Olay: {critical_events}")
-        dist_text = f"📊 Risk Dağılımı: 🟢 {risk_counts['Low']} | 🟡 {risk_counts['Medium']} | 🟠 {risk_counts['High']} | 🔴 {risk_counts['Critical']} | ☠️ {risk_counts['Fatal']}"
-        self.lbl_risk_dist.setText(dist_text)
-        
-        if all_ips:
-            en_cok_ip = Counter(all_ips).most_common(1)[0][0]
-            self.lbl_top_ip.setText(f"🌐 En Aktif IP: {en_cok_ip}")
-        if all_users:
-            en_cok_user = Counter(all_users).most_common(1)[0][0]
-            self.lbl_top_user.setText(f"👤 En Aktif Kullanıcı: {en_cok_user}")
-        if all_event_ids:
-            en_cok_event = Counter(all_event_ids).most_common(1)[0][0]
-            self.lbl_top_event_id.setText(f"🆔 En Sık Event ID: {en_cok_event}")
-            
-        if ioc_detected and show_popup and new_ioc_found:
-            html_kayitlar = "<br>".join(ioc_details)
-            html_mesaj = f"<h3>DİKKAT! Log dosyasında bilinen zararlı IP adresleri (IOC) tespit edildi!</h3><b>Bulunan Kayıtlar:</b><br><br>{html_kayitlar}<br><br><i>Lütfen tablodaki ilgili satırları inceleyin ve derhal ağ bağlantısını kesin.</i>"
-            uyari = QMessageBox(self)
-            uyari.setWindowTitle("🚨 KRİTİK GÜVENLİK UYARISI")
-            uyari.setIcon(QMessageBox.Critical)
-            uyari.setText(html_mesaj)
-            ekran = QApplication.primaryScreen().availableGeometry()
-            x = (ekran.width() - 400) // 2
-            y = (ekran.height() - 200) // 2
-            uyari.move(x, y)
-            uyari.exec()
+        if hasattr(self, 'worker') and self.worker.isRunning(): return 
+        if self.current_file:
+            # Canlı izlemede wevtutil motorunu doğrudan tetikliyoruz
+            self.process_file(self.current_file, show_popup=False, scan_mode="wevtutil_canli")
 
     def apply_filter(self):
         search_text = self.filter_input.text().lower() 
         selected_column = self.filter_column.currentText()
-        # Yeni sütun sıralamasına göre indeksler güncellendi:
         column_map = {"Tarih": 0, "Saat": 1, "Event ID": 2, "Kullanıcı": 3, "IP Adresi": 4, "Durum": 5, "Risk Seviyesi": 6, "Tespit Nedeni": 7}
-        # (Filtreleme kodunun geri kalanı aynı kalabilir)
         for row in range(self.log_table.rowCount()):
             match = False
             if selected_column == "Tümü":
                 for col in range(self.log_table.columnCount()):
                     item = self.log_table.item(row, col)
-                    if item and search_text in item.text().lower():
-                        match = True
-                        break
+                    if item and search_text in item.text().lower(): match = True; break
             else:
                 col_idx = column_map[selected_column]
                 item = self.log_table.item(row, col_idx)
-                if item and search_text in item.text().lower():
-                    match = True
+                if item and search_text in item.text().lower(): match = True
             self.log_table.setRowHidden(row, not match)
 
     def clear_filter(self):
         self.filter_input.clear()
         self.filter_column.setCurrentIndex(0) 
-        for row in range(self.log_table.rowCount()):
-            self.log_table.setRowHidden(row, False)
+        for row in range(self.log_table.rowCount()): self.log_table.setRowHidden(row, False)
 
     def block_ip_in_firewall(self, ip_address, sessiz_mod=False):
         if not ip_address or ip_address == "-": return
-        
-        import subprocess
         rule_name = f"WinLogSentinel_Block_{ip_address}"
-        
-        # 1. Önce bu IP için daha önce kural oluşturulmuş mu diye Firewall'a soruyoruz
         kontrol_komutu = f'netsh advfirewall firewall show rule name="{rule_name}"'
-        kontrol_sonucu = subprocess.run(kontrol_komutu, shell=True, capture_output=True)
-        
-        # Eğer sonuç 0 dönüyorsa, bu isimde bir kural zaten var demektir!
-        if kontrol_sonucu.returncode == 0:
-            if not sessiz_mod:
-                QMessageBox.information(self, "Zaten Engelli", f"ℹ️ {ip_address} IP adresi zaten Firewall üzerinde engellenmiş durumda!\n\nEkstra bir işleme gerek yoktur.")
-            return # Zaten engelli olduğu için aşağıdaki kodları hiç çalıştırmadan fonksiyondan çık
-        
-        # 2. Eğer kural yoksa, normal engelleme işlemine geçiyoruz
+        if subprocess.run(kontrol_komutu, shell=True, capture_output=True).returncode == 0: return 
         komut = f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=block remoteip={ip_address}'
-        
         try:
             subprocess.run(komut, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if not sessiz_mod:
-                QMessageBox.information(self, "Başarılı", f"⛔ {ip_address} IP adresi Windows Firewall üzerinden başarıyla engellendi!")
+            if not sessiz_mod: QMessageBox.information(self, "Başarılı", f"⛔ {ip_address} IP adresi engellendi!")
         except subprocess.CalledProcessError:
-            if not sessiz_mod:
-                QMessageBox.critical(self, "Yetki Hatası", "Güvenlik duvarı kuralı eklenemedi!\n\nLütfen WinLogSentinel programını Yönetici (Administrator) olarak çalıştırdığınızdan emin olun.")
+            if not sessiz_mod: QMessageBox.critical(self, "Yetki Hatası", "Yönetici olarak çalıştırdığınızdan emin olun.")
 
     def show_blocked_ips_manager(self):
-        import subprocess
-        
-        if not hasattr(self, 'unblocked_ips'):
-            self.unblocked_ips = set()
-            
-        # 1. Hangi listeyi görüntülemek istediğini sor
-        modlar = [
-            "⛔ Engellenen IP'leri Listele (Engeli Kaldır)",
-            "✅ Beyaz Listedeki (İzin Verilen) IP'leri Listele / Yönet"
-        ]
-        secilen_mod, ok = QInputDialog.getItem(
-            self, 
-            "🛡️ IP Yönetim Paneli", 
-            "İşlem yapmak istediğiniz kategoriyi seçin:", 
-            modlar, 0, False
-        )
-        if not ok or not secilen_mod:
-            return
-
-        # --- A. ENGELLENEN IP'LER MODU ---
+        modlar = ["⛔ Engellenen IP'leri Listele (Engeli Kaldır)", "✅ Beyaz Liste Yönetimi"]
+        secilen_mod, ok = QInputDialog.getItem(self, "🛡️ IP Yönetim Paneli", "İşlem:", modlar, 0, False)
+        if not ok: return
         if "⛔ Engellenen" in secilen_mod:
-            komut = 'netsh advfirewall firewall show rule name=all'
             engellenenler = []
-            
             try:
-                result = subprocess.run(komut, shell=True, capture_output=True, text=True, encoding='cp857')
+                result = subprocess.run('netsh advfirewall firewall show rule name=all', shell=True, capture_output=True, text=True, encoding='cp857', errors='ignore')
                 for line in result.stdout.splitlines():
                     if "WinLogSentinel_Block_" in line:
-                        parts = line.split("WinLogSentinel_Block_")
-                        if len(parts) > 1:
-                            ip = parts[1].strip()
-                            if ip not in engellenenler:
-                                engellenenler.append(ip)
-            except Exception as e:
-                print(f"Okuma hatası: {e}")
-            
-            if not engellenenler:
-                QMessageBox.information(self, "Bilgi", "Şu anda güvenlik duvarında engellenmiş bir IP adresi bulunmuyor.")
-                return
-                
-            secilen_ip, ok = QInputDialog.getItem(
-                self, 
-                "⛔ Engellenen IP Listesi", 
-                "Engelini kaldırıp 'Beyaz Liste'ye almak istediğiniz IP'yi seçin:", 
-                engellenenler, 0, False
-            )
-            
+                        ip = line.split("WinLogSentinel_Block_")[1].strip()
+                        if ip not in engellenenler: engellenenler.append(ip)
+            except Exception: pass
+            if not engellenenler: QMessageBox.information(self, "Bilgi", "Engellenen IP yok."); return
+            secilen_ip, ok = QInputDialog.getItem(self, "Engellenenler", "Engelini kaldır:", engellenenler, 0, False)
             if ok and secilen_ip:
-                kural_adi = f"WinLogSentinel_Block_{secilen_ip}"
-                sil_komut = f'netsh advfirewall firewall delete rule name="{kural_adi}"'
-                try:
-                    subprocess.run(sil_komut, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    self.unblocked_ips.add(secilen_ip)
-                    QMessageBox.information(
-                        self, 
-                        "Başarılı", 
-                        f"✅ {secilen_ip} IP adresinin engeli kaldırıldı ve Beyaz Liste'ye eklendi!"
-                    )
-                except subprocess.CalledProcessError:
-                    QMessageBox.critical(self, "Yetki Hatası", "Engel kaldırılamadı!\n\nLütfen programı Yönetici olarak çalıştırın.")
-
-        # --- B. BEYAZ LİSTE (İZİN VERİLENLER) MODU ---
-        else:
-            if not self.unblocked_ips:
-                QMessageBox.information(self, "Bilgi", "Şu anda Beyaz Liste'de (İzin Verilen) kayıtlı bir IP adresi bulunmuyor.")
-                return
-                
-            beyaz_liste_dizi = list(self.unblocked_ips)
-            secilen_ip, ok = QInputDialog.getItem(
-                self, 
-                "✅ Beyaz Liste (İzin Verilenler)", 
-                "Beyaz listeden ÇIKARMAK (Tekrar tespit edildiğinde engellenebilir yapmak) istediğiniz IP'yi seçin:\n\n(İşlem yapmadan çıkmak için İptal'e basabilirsiniz)", 
-                beyaz_liste_dizi, 0, False
-            )
-            
-            if ok and secilen_ip:
-                self.unblocked_ips.remove(secilen_ip)
-                QMessageBox.information(
-                    self, 
-                    "Güncellendi", 
-                    f"ℹ️ {secilen_ip} IP adresi Beyaz Liste'den çıkarıldı.\n\nBir sonraki analizde zararlı olarak gelirse tekrar otomatik olarak engellenecektir."
-                )
+                subprocess.run(f'netsh advfirewall firewall delete rule name="WinLogSentinel_Block_{secilen_ip}"', shell=True)
+                QMessageBox.information(self, "Başarılı", f"{secilen_ip} engeli kaldırıldı.")
 
     def show_event_details(self, row, column):
-        tarih = self.log_table.item(row, 0).text()
-        saat = self.log_table.item(row, 1).text()
-        event_id = self.log_table.item(row, 2).text()
-        kullanici = self.log_table.item(row, 3).text()
-        ip = self.log_table.item(row, 4).text()
-        durum = self.log_table.item(row, 5).text()
-        risk = self.log_table.item(row, 6).text()
-        tespit = self.log_table.item(row, 7).text()
+        tarih = self.log_table.item(row, 0).text() if self.log_table.item(row, 0) else "-"
+        saat = self.log_table.item(row, 1).text() if self.log_table.item(row, 1) else "-"
+        event_id = self.log_table.item(row, 2).text() if self.log_table.item(row, 2) else "-"
+        kullanici = self.log_table.item(row, 3).text() if self.log_table.item(row, 3) else "-"
+        ip = self.log_table.item(row, 4).text() if self.log_table.item(row, 4) else "-"
+        durum = self.log_table.item(row, 5).text() if self.log_table.item(row, 5) else "-"
+        risk = self.log_table.item(row, 6).text() if self.log_table.item(row, 6) else "-"
+        tespit = self.log_table.item(row, 7).text() if self.log_table.item(row, 7) else "-"
 
-        onerilen_aksiyon = "Normal bir aktivite, özel bir işleme gerek yoktur."
-        gerekli_mudahale = False 
-
-        if "IOC MATCH" in tespit: 
-            onerilen_aksiyon = f"KRİTİK DURUM! {ip} adresi bilinen zararlılar listesindedir. Ağ bağlantısı derhal kesilmelidir!"
-            gerekli_mudahale = True
-        elif "Brute Force" in tespit: 
-            onerilen_aksiyon = f"Acil Durum! {ip} IP adresi derhal Firewall üzerinden engellenmelidir."
-            gerekli_mudahale = True
-        elif "Şüpheli İşlem" in tespit: 
-            onerilen_aksiyon = f"Zararlı Yazılım İhtimali! İlgili bilgisayarda antivirüs taraması yapılmalıdır."
-        elif "Yetkisi Ataması" in tespit:
-            onerilen_aksiyon = f"Yetki Yükseltme! {kullanici} kullanıcısına verilen admin yetkisinin onayı kontrol edilmelidir."
-        elif "Başarısız Giriş" in tespit:
-            onerilen_aksiyon = f"{ip} adresinden gelen giriş denemeleri izlenmeye devam edilmelidir."
-        elif "Mesai Dışı" in tespit:
-            onerilen_aksiyon = f"Şüpheli Giriş! {kullanici} kullanıcısının bu saatte çalışıp çalışmadığı teyit edilmelidir."
-        elif "Account Compromise" in tespit:
-            onerilen_aksiyon = f"İHLAL TESPİTİ! {kullanici} kullanıcısının hesabı ele geçirilmiş olabilir. Acil parola sıfırlama işlemi gereklidir."
-
-        detay_mesaji = f"Risk Seviyesi: {risk}\nTarih / Saat: {saat}\nKullanıcı: {kullanici}\nIP Adresi: {ip}\nEvent ID: {event_id}\n\n📋 Tespit Nedeni:\n{tespit}\n\n🔍 İşlem Durumu:\n{durum}\n\n💡 Önerilen Aksiyon:\n{onerilen_aksiyon}"
-        
+        detay_mesaji = f"Risk Seviyesi: {risk}\nTarih / Saat: {tarih} {saat}\nKullanıcı: {kullanici}\nIP Adresi: {ip}\nEvent ID: {event_id}\n\n📋 Tespit:\n{tespit}"
         uyari = QMessageBox(self)
-        uyari.setWindowTitle("Güvenlik Uyarısı Detayı")
-        uyari.setIcon(QMessageBox.Information)
+        uyari.setWindowTitle("Detay")
         uyari.setText(detay_mesaji)
-        
-        # Eğer IP geçerliyse Engelle butonunu "YesRole" ile SOLA zorluyoruz
-        block_btn = None
-        if ip and ip != "-" and ip.lower() != "system":
-            block_btn = uyari.addButton("⛔ Bu IP'yi Firewall'dan Engelle", QMessageBox.YesRole)
-            
-        # OK butonunu "NoRole" ile SAĞA zorluyoruz
-        ok_btn = uyari.addButton("OK", QMessageBox.NoRole)
-            
         uyari.exec()
 
-        # Eğer kullanıcı engelle butonuna bastıysa fonksiyonu çağır
-        if block_btn and uyari.clickedButton() == block_btn:
-            self.block_ip_in_firewall(ip)
-
     def export_report(self):
-        import json
-        import csv
-        import os
-        from datetime import datetime
-        
-        formatlar = ["CSV (Excel Uyumlu Tablo)", "JSON (Detaylı Özet ve Yapılandırılmış Metin)"]
-        secim, ok = QInputDialog.getItem(self, "Rapor Formatı Seç", "Lütfen kaydetmek istediğiniz formatı seçin:", formatlar, 0, False)
+        formatlar = ["CSV", "JSON"]
+        secim, ok = QInputDialog.getItem(self, "Rapor", "Format:", formatlar, 0, False)
         if not ok: return
-
-        current_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        
-        risk_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "Fatal": 0}
-        suspicious_count = 0
-        events = []
-        
         headers = [self.log_table.horizontalHeaderItem(c).text() for c in range(self.log_table.columnCount())]
-        
-        # SADECE EKRANDA GÖRÜNEN (FİLTRELENMEMİŞ) SATIRLARI ALIYORUZ
-        visible_row_count = 0
+        events = []
         for row in range(self.log_table.rowCount()):
-            if self.log_table.isRowHidden(row): 
-                continue 
-                
-            visible_row_count += 1
-            row_data = {}
-            for c in range(self.log_table.columnCount()):
-                item = self.log_table.item(row, c)
-                val = item.text() if item else ""
-                row_data[headers[c]] = val
-                
-                # Özet istatistikler için risk sayımı
-                if c == 5: 
-                    if "Low" in val: risk_counts["Low"] += 1
-                    elif "Medium" in val: risk_counts["Medium"] += 1
-                    elif "High" in val: 
-                        risk_counts["High"] += 1
-                        suspicious_count += 1
-                    elif "Critical" in val: 
-                        risk_counts["Critical"] += 1
-                        suspicious_count += 1
-                    elif "FATAL" in val or "Fatal" in val: 
-                        risk_counts["Fatal"] += 1
-                        suspicious_count += 1
-
+            if self.log_table.isRowHidden(row): continue 
+            row_data = {headers[c]: (self.log_table.item(row, c).text() if self.log_table.item(row, c) else "") for c in range(self.log_table.columnCount())}
             events.append(row_data)
-
-        summary = {
-            "Analiz_Tarihi": current_time,
-            "Disa_Aktarilan_Kayit_Sayisi": visible_row_count,
-            "Supheli_Olay_Sayisi": suspicious_count,
-            "Risk_Dagilimi": f"Low: {risk_counts['Low']}, Medium: {risk_counts['Medium']}, High: {risk_counts['High']}, Critical: {risk_counts['Critical']}, Fatal: {risk_counts['Fatal']}"
-        }
-
-        # 1. CSV KAYIT
         if "CSV" in secim:
-            file_path, _ = QFileDialog.getSaveFileName(self, "CSV Raporunu Kaydet", "Guvenlik_Analiz_Raporu.csv", "CSV Files (*.csv)")
-            if file_path:
-                try:
-                    with open(file_path, "w", newline="", encoding="utf-8-sig") as file:
-                        writer = csv.writer(file, delimiter=';')
-                        writer.writerow(headers)
-                        for row_data in events:
-                            # Emojileri temizleyip temiz bir kurumsal Excel formatı sunuyoruz
-                            temiz_veri = [row_data.get(h, "").replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "").replace("☠️ ", "") for h in headers]
-                            writer.writerow(temiz_veri)
-                    QMessageBox.information(self, "Başarılı", f"CSV Raporu ekrandaki {visible_row_count} kayıt ile başarıyla kaydedildi.")
-                except PermissionError:
-                    # EĞER EXCEL AÇIKSA UYARI VER!
-                    QMessageBox.critical(self, "Erişim Engellendi!", "Dosya şu anda Excel'de veya başka bir programda AÇIK!\n\nLütfen açık olan Excel dosyasını kapatıp tekrar 'İndir' butonuna basın veya kaydederken farklı bir isim verin (Örn: Rapor_Yeni.csv).")
-                
-        # 2. JSON KAYIT
-        else:
-            file_path, _ = QFileDialog.getSaveFileName(self, "JSON Raporunu Kaydet", "Guvenlik_Analiz_Raporu.json", "JSON Files (*.json)")
-            if file_path:
-                report_data_final = {
-                    "Rapor_Ozeti": summary,
-                    "Tespit_Edilen_Olaylar": events
-                }
-                
-                # Emojileri temizleme
-                for ev in report_data_final["Tespit_Edilen_Olaylar"]:
-                    if "Risk Seviyesi" in ev:
-                        ev["Risk Seviyesi"] = ev["Risk Seviyesi"].replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "").replace("☠️ ", "")
-                        
-                try:
-                    with open(file_path, "w", encoding="utf-8") as f:
-                        json.dump(report_data_final, f, ensure_ascii=False, indent=4)
-                    QMessageBox.information(self, "Başarılı", f"JSON Raporu ekrandaki {visible_row_count} kayıt ile başarıyla kaydedildi.")
-                except PermissionError:
-                    QMessageBox.critical(self, "Erişim Engellendi!", "Dosya şu anda başka bir programda AÇIK!\n\nLütfen dosyayı kapatıp tekrar deneyin.")
-                    
+            path, _ = QFileDialog.getSaveFileName(self, "Kaydet", "Rapor.csv", "CSV (*.csv)")
+            if path:
+                with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                    w = csv.writer(f, delimiter=';')
+                    w.writerow(headers)
+                    for ev in events: w.writerow([ev.get(h, "") for h in headers])
+                QMessageBox.information(self, "Başarılı", "Kaydedildi.")
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
