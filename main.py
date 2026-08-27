@@ -3,6 +3,7 @@ import os
 import csv
 import json
 import subprocess
+import ipaddress
 from datetime import datetime
 from datetime import timedelta
 
@@ -673,14 +674,30 @@ class MainWindow(QMainWindow):
         for row in range(self.log_table.rowCount()): self.log_table.setRowHidden(row, False)
 
     def block_ip_in_firewall(self, ip_address, sessiz_mod=False):
-        if not ip_address or ip_address == "-": return
-        rule_name = f"WinLogSentinel_Block_{ip_address}"
-        kontrol_komutu = f'netsh advfirewall firewall show rule name="{rule_name}"'
-        if subprocess.run(kontrol_komutu, shell=True, capture_output=True).returncode == 0: return 
-        
-        komut = f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=block remoteip={ip_address}'
+        if not ip_address or ip_address == "-" or ip_address == "127.0.0.1": 
+            return
+            
+        # 🛡️ 1. GÜVENLİK KONTROLÜ: Gelen verinin gerçekten bir IP adresi olup olmadığını doğrula
+        import ipaddress
         try:
-            subprocess.run(komut, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            ipaddress.ip_address(ip_address)
+        except ValueError:
+            return # Eğer IP değilse (zararlı bir kodsa) hiçbir işlem yapma ve geri dön!
+
+        rule_name = f"WinLogSentinel_Block_{ip_address}"
+        
+        # 🛡️ 2. GÜVENLİK KONTROLÜ: shell=True yerine Liste yapısı kullan (Command Injection Koruması)
+        kontrol_komutu = ["netsh", "advfirewall", "firewall", "show", "rule", f"name={rule_name}"]
+        
+        if subprocess.run(kontrol_komutu, capture_output=True).returncode == 0: 
+            return 
+        
+        # Yine komutu string değil, liste olarak veriyoruz
+        komut = ["netsh", "advfirewall", "firewall", "add", "rule", f"name={rule_name}", "dir=in", "action=block", f"remoteip={ip_address}"]
+        
+        try:
+            # shell=True parametresi kaldırıldı, çok daha güvenli hale geldi
+            subprocess.run(komut, check=True, capture_output=True)
             
             # 🎯 1. CANLI BİLGİLENDİRME (KUYRUK SİSTEMİ): Mesajı kuyruğa ekle
             if not hasattr(self, 'status_queue'): 
@@ -735,7 +752,6 @@ class MainWindow(QMainWindow):
             self.is_status_queue_running = False
 
     def show_blocked_ips_manager(self):
-        # 🎯 YENİ: Menüye 3. Seçenek Eklendi
         modlar = [
             "⛔ Engellenen IP'leri Listele (Engeli Kaldır)", 
             "✅ Beyaz Liste Yönetimi", 
@@ -748,7 +764,10 @@ class MainWindow(QMainWindow):
         if "⛔ Engellenen" in secilen_mod:
             engellenenler = []
             try:
-                result = subprocess.run('netsh advfirewall firewall show rule name=all', shell=True, capture_output=True, text=True, encoding='cp857', errors='ignore')
+                # 🛡️ GÜVENLİK 1: Tüm kuralları listelerken shell=False ve liste yapısı
+                komut_liste = ["netsh", "advfirewall", "firewall", "show", "rule", "name=all"]
+                result = subprocess.run(komut_liste, capture_output=True, text=True, encoding='cp857', errors='ignore')
+                
                 for line in result.stdout.splitlines():
                     if "WinLogSentinel_Block_" in line:
                         ip = line.split("WinLogSentinel_Block_")[1].strip()
@@ -759,10 +778,19 @@ class MainWindow(QMainWindow):
             
             secilen_ip, ok = QInputDialog.getItem(self, "Engellenenler", "Engelini kaldır:", engellenenler, 0, False)
             if ok and secilen_ip:
-                # 1. Güvenlik duvarından kuralı sil
-                subprocess.run(f'netsh advfirewall firewall delete rule name="WinLogSentinel_Block_{secilen_ip}"', shell=True)
+                # 🛡️ GÜVENLİK 2: Kuralı silmeden önce IP'yi doğrula
+                import ipaddress
+                try:
+                    ipaddress.ip_address(secilen_ip)
+                except ValueError:
+                    QMessageBox.warning(self, "Hata", "Geçersiz IP adresi tespit edildi! İşlem iptal edildi.")
+                    return
                 
-                # 🎯 YENİ: İşlemi denetim kaydına (Audit Log) yazdır
+                # 🛡️ GÜVENLİK 3: Silme işleminde shell=False ve liste yapısı
+                silme_komutu = ["netsh", "advfirewall", "firewall", "delete", "rule", f"name=WinLogSentinel_Block_{secilen_ip}"]
+                subprocess.run(silme_komutu)
+                
+                # İşlemi denetim kaydına (Audit Log) yazdır
                 from datetime import datetime
                 zaman = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 with open("denetim_kaydi.txt", "a", encoding="utf-8") as f:
@@ -785,8 +813,14 @@ class MainWindow(QMainWindow):
             elif "➕ Yeni IP Ekle" in w_secim:
                 yeni_ip, ok = QInputDialog.getText(self, "Beyaz Liste", "Güvenilir IP adresini girin (Örn: 192.168.1.15):")
                 if ok and yeni_ip.strip():
-                    self.whitelisted_ips.add(yeni_ip.strip())
-                    QMessageBox.information(self, "Başarılı", f"{yeni_ip} beyaz listeye eklendi. Artık otomatik engellenmeyecek.")
+                    # 🛡️ GÜVENLİK 4: Beyaz listeye eklerken bile hatalı veri girişini engelle
+                    import ipaddress
+                    try:
+                        ipaddress.ip_address(yeni_ip.strip())
+                        self.whitelisted_ips.add(yeni_ip.strip())
+                        QMessageBox.information(self, "Başarılı", f"{yeni_ip} beyaz listeye eklendi. Artık otomatik engellenmeyecek.")
+                    except ValueError:
+                        QMessageBox.warning(self, "Hata", "Lütfen geçerli bir IPv4 veya IPv6 adresi girin!")
                     
             elif "➖ IP Çıkar" in w_secim:
                 if not self.whitelisted_ips:
@@ -797,7 +831,7 @@ class MainWindow(QMainWindow):
                     self.whitelisted_ips.remove(silinecek_ip)
                     QMessageBox.information(self, "Başarılı", f"{silinecek_ip} beyaz listeden çıkarıldı.")
                     
-        # 🎯 3. YENİ MOD: İŞLEM GEÇMİŞİ (AUDIT LOG)
+        # 3. MOD: İŞLEM GEÇMİŞİ (AUDIT LOG)
         elif "📜 İşlem" in secilen_mod:
             try:
                 import os
@@ -812,7 +846,6 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(self, "İşlem Geçmişi", "Geçmiş kaydı boş.")
                     return
                     
-                # Uzun kayıtlar için "Show Details" özellikli genişletilebilir mesaj kutusu
                 msg = QMessageBox(self)
                 msg.setWindowTitle("📜 İşlem Geçmişi")
                 msg.setText("Sistemden engeli kaldırılan IP adresleri geçmişte kayıtlıdır.\nKayıtları görmek için 'Show Details...' (Ayrıntıları Göster) butonuna tıklayın.")
