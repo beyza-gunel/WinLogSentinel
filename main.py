@@ -200,7 +200,8 @@ class MainWindow(QMainWindow):
             return
 
         if not hasattr(self, 'failed_attempts'): self.failed_attempts = {}
-        if str(event_id) == "4624": self.failed_attempts[kullanici] = 0
+        # 🎯 Başarılı girişte o IP ve Kullanıcı kombinasyonunun sayacını sıfırla
+        if str(event_id) == "4624": self.failed_attempts[(kullanici, ip)] = 0
 
         risk_skoru = 0
         tespit = "Normal Aktivite"
@@ -211,8 +212,11 @@ class MainWindow(QMainWindow):
             risk_skoru += 16
             tespit = "Kural 4: Şüpheli İşlem"
         elif str(event_id) == "4625":
-            self.failed_attempts[kullanici] = self.failed_attempts.get(kullanici, 0) + 1
-            deneme_sayisi = self.failed_attempts[kullanici]
+            # 🎯 İŞTE BURASI: Artık anahtarımız Kullanıcı ve IP kombinasyonu!
+            hedef = (kullanici, ip)
+            self.failed_attempts[hedef] = self.failed_attempts.get(hedef, 0) + 1
+            deneme_sayisi = self.failed_attempts[hedef]
+            
             if deneme_sayisi >= 3:
                 risk_skoru += 20
                 tespit = f"Kural 1: Brute Force İhtimali ({deneme_sayisi}. Deneme)"
