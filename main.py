@@ -4,12 +4,14 @@ import csv
 import json
 import subprocess
 import ipaddress
+import pandas as pd
+import openpyxl
 from datetime import datetime
 from datetime import timedelta
 
 import xml.etree.ElementTree as ET
 
-from PySide6.QtCore import QTimer, Qt, Signal, QThread, QCoreApplication
+from PySide6.QtCore import QTimer, Signal, QThread, QCoreApplication
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
                                QHBoxLayout, QGridLayout, QWidget, QTableWidget, QTableWidgetItem, 
                                QFileDialog, QLabel, QGroupBox, QMessageBox, QAbstractItemView,
@@ -23,7 +25,7 @@ class ClickableLabel(QLabel):
 
 class LogWorker(QThread):
     log_ready = Signal(list, int)
-    finished = Signal(int)
+    analysis_finished = Signal(int)
     error = Signal(str)
 
     def __init__(self, file_path, ioc_mode, known_malicious_ips, vt_api_key, scan_mode="gecmis", last_count=0):
@@ -39,19 +41,50 @@ class LogWorker(QThread):
         try:
             total_records_processed = 0
             # Eğer kullanıcı gerçek Windows Güvenlik günlüğünü seçtiyse veya canlı izlemedeysek wevtutil motorunu çalıştır
-            if "Security.evtx" in self.file_path or self.scan_mode == "wevtutil_canli":
+            import os # (Eğer dosyanın en üstünde ekli değilse eklemeyi unutma)
+            
+            # 🛡️ GÜVENLİ DOSYA KONTROLÜ: Sadece dosya adına bakar, klasör yoluna aldanmaz
+            if os.path.basename(self.file_path).lower() == "security.evtx" or self.scan_mode == "wevtutil_canli":
                 total_records_processed = self.parse_wevtutil_live()
             else:
                 # Normal dosya yüklemeleri için standart EVTX/CSV okuyucu
                 if self.file_path.endswith('.csv'):
-                    with open(self.file_path, "r", encoding="utf-8") as file:
-                        reader = csv.reader(file)
-                        next(reader, None) 
-                        raw_rows = list(reader)
-                        total_records_processed = len(raw_rows)
+                    raw_rows = []
+                    # 1. ENCODING KORUMASI: Önce BOM'lu UTF-8 dene, patlarsa Windows-1254 (Türkçe ANSI) kullan
+                    try:
+                        with open(self.file_path, "r", encoding="utf-8-sig") as file:
+                            raw_rows = list(csv.reader(file))
+                    except UnicodeDecodeError:
+                        with open(self.file_path, "r", encoding="cp1254") as file:
+                            raw_rows = list(csv.reader(file))
+
+                    if raw_rows:
+                        # 2. BAŞLIK KORUMASI: İlk satır başlık mı yoksa gerçek log mu?
+                        ilk_satir = raw_rows[0]
+                        # Bizim mantığımıza göre index 2'de (3. sütunda) EventID (Olay Kimliği) olmalı.
+                        # Eğer bu bir sayı değilse (örn: "Event ID" veya "Olay Kimliği" yazıyorsa) bu bir başlıktır!
+                        if len(ilk_satir) > 2 and not str(ilk_satir[2]).strip().isdigit():
+                            raw_rows.pop(0) # Sadece gerçekten başlıksa sil, değilse ilk logu kurtardın!
+
+                    total_records_processed = len(raw_rows)
+                        
+                    for idx, row in enumerate(raw_rows):
+                        # 🛡️ 1. GÜVENLİ KAPANIŞ KONTROLÜ (CSV DÖNGÜSÜ)
+                        if self.isInterruptionRequested(): 
+                            break
+
+                        if len(row) >= 6:
+                            log_row = [row[0].strip(), row[1].strip(), row[2].strip(), row[3].strip(), row[4].strip(), row[5].strip(), str(idx)]
+                        else:
+                            continue
+                        self.log_ready.emit(log_row, idx)
                         
                         # 🔴 DÜZELTME: raw_rows.reverse() SİLİNDİ! (Kronolojik işleme için)
                         for idx, row in enumerate(raw_rows):
+                            # 🛡️ 1. GÜVENLİ KAPANIŞ KONTROLÜ (CSV DÖNGÜSÜ)
+                            if self.isInterruptionRequested(): 
+                                break
+
                             if len(row) >= 6:
                                 log_row = [row[0].strip(), row[1].strip(), row[2].strip(), row[3].strip(), row[4].strip(), row[5].strip(), str(idx)]
                             else:
@@ -72,19 +105,28 @@ class LogWorker(QThread):
                         temp_path = self.file_path
                         
                     with evtx.Evtx(temp_path) as evtx_file:
-                        all_records = list(evtx_file.records())
-                        total_records_processed = len(all_records)
+                        ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
                         
+                        # 🎯 RAM DOSTU: Sadece canlı izleme modundaysak dosyayı RAM'e almadan hızlıca sayıp geçiyoruz
                         if self.scan_mode == "canli_sadece":
+                            total_records_processed = sum(1 for _ in evtx_file.records())
                             self.log_ready.emit(["-", "-", "🟢 CANLI DİNLEME AKTİF", "System", "-", f"Geçmiş {total_records_processed} log yoksayıldı. Sistem dinleniyor..."], 0)
                             return total_records_processed
                             
-                        records_to_process = all_records[self.last_count:total_records_processed] if self.scan_mode == "canli_guncelleme" else all_records
+                        total_records_processed = 0
                         
-                        # 🔴 DÜZELTME: records_to_process.reverse() SİLİNDİ! (Kronolojik işleme için)
-                        
-                        ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
-                        for idx, record in enumerate(records_to_process):
+                        # 🎯 RAM DOSTU: list() kullanmak yerine logları tek tek (akış şeklinde) çekiyoruz
+                        for idx, record in enumerate(evtx_file.records()):
+                            # 🛡️ 2. GÜVENLİ KAPANIŞ KONTROLÜ (EVTX DÖNGÜSÜ)
+                            if self.isInterruptionRequested(): 
+                                break
+                                
+                            total_records_processed = idx + 1 # İşlenen log sayısını güncel tut
+                            
+                            # Eğer güncellemeyse ve bu logu daha önce okuduysak atla (İşlemci tasarrufu)
+                            if self.scan_mode == "canli_guncelleme" and idx < self.last_count:
+                                continue
+
                             try:
                                 root = ET.fromstring(record.xml())
                                 system = root.find(f'{ns}System')
@@ -119,7 +161,7 @@ class LogWorker(QThread):
                         try: os.remove(temp_path)
                         except Exception: pass
             
-            self.finished.emit(total_records_processed)
+            self.analysis_finished.emit(total_records_processed)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -140,6 +182,10 @@ class LogWorker(QThread):
                 
                 gecici_liste = []
                 for event in records:
+                    # 🛡️ 3. GÜVENLİ KAPANIŞ KONTROLÜ (CANLI DİNLEME DÖNGÜSÜ)
+                    if self.isInterruptionRequested(): 
+                        break
+
                     try:
                         system = event.find(f'{ns}System')
                         event_data = event.find(f'{ns}EventData')
@@ -175,6 +221,7 @@ class LogWorker(QThread):
                 gecici_liste.sort(key=lambda x: x[0], reverse=False)
     
                 for idx, item in enumerate(gecici_liste):
+                    if self.isInterruptionRequested(): break # Ekstra güvenlik: Ekrana yazdırırken durdurulursa anında kes
                     self.log_ready.emit(item[1], idx)
                     
             except Exception as e:
@@ -200,7 +247,17 @@ class MainWindow(QMainWindow):
         # 3️⃣ Kontrollerimizi yapıyoruz:
         if log_id in self.seen_logs:
             return
-        self.seen_logs.add(log_id)
+            
+        self.seen_logs.add(log_id) 
+        
+        # 🛡️ BELLEK YÖNETİMİ (Memory Leak Koruması)
+        # Set kapasitesi 10.000'i aşarsa, belleği rahatlatmak için 2.000 elemanı çöpe at
+        if len(self.seen_logs) > 10000:
+            import itertools
+            # Set'ten ilk 2000 elemanı al ve sil
+            silinecekler = list(itertools.islice(self.seen_logs, 2000))
+            for s in silinecekler:
+                self.seen_logs.discard(s)
         
         # ... tablodaki satır ekleme işlemlerin ...
 
@@ -251,9 +308,13 @@ class MainWindow(QMainWindow):
                 risk_skoru += 1
                 tespit = f"Kural 2: Başarısız Giriş ({deneme_sayisi}. Deneme)"
 
+        # 🚀 GÜNCELLENMİŞ KONTROL: Hem gerçek zararlı IP'leri hem de test IP'sini ayrı ayrı yakala
         if ip in self.known_malicious_ips:
             risk_skoru += 50
-            tespit = "🚨 IOC MATCH DETECTED (Zararlı IP Tespiti)"
+            tespit = "🚨 IOC MATCH DETECTED (Zararlı IP Tespiti)" 
+        elif ip in self.test_ips:
+            risk_skoru += 50
+            tespit = "🧪 TEST IOC MATCH (Test Amaçlı IP Tespiti)"
 
         yazi_rengi = QColor(0, 0, 0)
         kalin_yazi = False
@@ -318,8 +379,6 @@ class MainWindow(QMainWindow):
                 kalin_font = QFont(); kalin_font.setBold(True); hucre.setFont(kalin_font)
             self.log_table.setItem(target_row, col_idx, hucre) 
 
-        if row_idx > 0 and row_idx % 200 == 0:
-            QCoreApplication.processEvents()
 
     def __init__(self):
         super().__init__()
@@ -346,9 +405,11 @@ class MainWindow(QMainWindow):
         self.lbl_total.clicked.connect(lambda: self.clear_filter())
         self.lbl_critical.clicked.connect(lambda: self.quick_filter("Risk Seviyesi", "Critical"))
         self.lbl_risk_dist.clicked.connect(self.select_risk_level_dialog) 
-        self.lbl_top_ip.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_ip, "IP Adresi", "En Aktif IP: "))
-        self.lbl_top_user.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_user, "Kullanıcı", "En Aktif Kullanıcı: "))
-        self.lbl_top_event_id.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_event_id, "Event ID", "En Sık Event ID: "))
+        
+        # 🚀 SADELEŞTİRİLMİŞ ÇAĞRILAR: Sondaki gereksiz prefix_text parametreleri uçuruldu!
+        self.lbl_top_ip.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_ip, "IP Adresi"))
+        self.lbl_top_user.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_user, "Kullanıcı"))
+        self.lbl_top_event_id.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_event_id, "Event ID"))
 
         font = QFont(); font.setBold(True); font.setPointSize(11)
         labels = [self.lbl_total, self.lbl_critical, self.lbl_risk_dist, self.lbl_top_ip, self.lbl_top_user, self.lbl_top_event_id]
@@ -437,24 +498,40 @@ class MainWindow(QMainWindow):
         self.last_log_count = 0 
         self.seen_logs = set()
 
-        self.known_malicious_ips = [
-            "185.15.15.15",
-            "45.33.32.156",
-            "10.0.0.99",
-            "185.220.101.5"]
+        import json
+        import os
+
+        self.known_malicious_ips = []
+        self.test_ips = []
+        
+        ioc_path = "ioc_list.json"
+        if os.path.exists(ioc_path):
+            try:
+                with open(ioc_path, "r", encoding="utf-8") as f:
+                    ioc_data = json.load(f)
+                    self.known_malicious_ips = ioc_data.get("malicious_ips", [])
+                    self.test_ips = ioc_data.get("test_ips", [])
+            except Exception as e:
+                print(f"IOC dosyası okunamadı: {e}")
+        else:
+            # JSON dosyası henüz yoksa, uygulamanın çökmemesi ve testlerin sürmesi için yedek:
+            self.test_ips = ["10.0.0.99"]
 
     def quick_filter(self, column, value):
         self.filter_column.setCurrentText(column)
         self.filter_input.setText(value)
         self.apply_filter()
 
-    def filter_by_label_text(self, label, column_name, prefix_text):
-        import re
-        text = label.text()
-        clean_text = re.sub('<[^<]+>', '', text)
-        if ":" in clean_text:
-            val = clean_text.split(":", 1)[1].strip()
-            if val and val != "-": self.quick_filter(column_name, val)
+    # 🚀 YENİ HALİ: prefix_text ve re modülü uçuruldu!
+    def filter_by_label_text(self, label, column_name):
+        raw_text = label.text()
+        
+        if ":" in raw_text:
+            # Sadece ":" sonrasını al ve sondaki "</span>" etiketini silip boşlukları temizle
+            val = raw_text.split(":", 1)[1].replace("</span>", "").strip()
+            
+            if val and val != "-": 
+                self.quick_filter(column_name, val)
 
     def select_risk_level_dialog(self):
         risk_seviyeleri = ["Low", "Medium", "High", "Critical", "Fatal"]
@@ -467,9 +544,16 @@ class MainWindow(QMainWindow):
             
         risk_sayilari = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "FATAL": 0}
         ip_sayilari, user_sayilari, event_sayilari = {}, {}, {}
+        
+        # 🎯 YENİ: Sadece ekranda görünen satırların sayısını tutacağımız değişken
+        gorunur_satir_sayisi = 0
 
         for row in range(row_count):
             if self.log_table.isRowHidden(row): continue
+            
+            # Gizli değilse görünür satır sayısını 1 artır
+            gorunur_satir_sayisi += 1
+            
             event_id = self.log_table.item(row, 2).text() if self.log_table.item(row, 2) else ""
             user = self.log_table.item(row, 3).text() if self.log_table.item(row, 3) else ""
             ip = self.log_table.item(row, 4).text() if self.log_table.item(row, 4) else ""
@@ -489,7 +573,9 @@ class MainWindow(QMainWindow):
         en_aktif_user = max(user_sayilari, key=user_sayilari.get) if user_sayilari else "-"
         en_sik_event = max(event_sayilari, key=event_sayilari.get) if event_sayilari else "-"
 
-        self.lbl_total.setText(f'<span style="color: #66b3ff;">Toplam Olay: {row_count}</span>')
+        # 🎯 YENİ: row_count yerine gorunur_satir_sayisi yazdırıyoruz
+        self.lbl_total.setText(f'<span style="color: #66b3ff;">Toplam Olay: {gorunur_satir_sayisi}</span>')
+        
         self.lbl_top_ip.setText(f'<span style="color: #66b3ff;">🌐 En Aktif IP: {en_aktif_ip}</span>')
         self.lbl_critical.setText(f'<span style="color: #ff6666;">🔴 Kritik Olay: {risk_sayilari["Critical"] + risk_sayilari["FATAL"]}</span>')
         self.lbl_top_user.setText(f'<span style="color: #ffb74d;">👤 En Aktif Kullanıcı: {en_aktif_user}</span>')
@@ -546,13 +632,24 @@ class MainWindow(QMainWindow):
 
             self.current_file = file_path
             self.btn_export.setEnabled(True)
+            # 🚀 MANTIKSAL BÜTÜNLÜK: Canlı izleme sadece gerçek Security loglarında aktif olmalı, statik CSV'lerde değil!
+        # 🚀 MANTIKSAL BÜTÜNLÜK: Canlı izleme sadece gerçek Security loglarında aktif olmalı!
+        import os
+        
+        # 🛡️ GÜVENLİ DOSYA KONTROLÜ: CSV mi yoksa ana Security.evtx mi?
+        if hasattr(self, 'current_file') and self.current_file and os.path.basename(self.current_file).lower() == "security.evtx":
             self.btn_live.setEnabled(True)
-            self.log_table.setRowCount(0)
-            self.failed_attempts = {}
-            self.current_fatal_alerts = []
-            self.last_log_count = 0
-            self.seen_logs.clear()
-            self.process_file(file_path, show_popup=True, scan_mode=scan_mode)
+        else:
+            self.btn_live.setEnabled(False)
+            
+        # ⚠️ DİKKAT: Buradan aşağısı if/else bloğunun DIŞINDA olmalı (Hizalamaya dikkat et)
+        # Çünkü dosya ne olursa olsun tablo temizlenmeli ve analiz başlamalıdır.
+        self.log_table.setRowCount(0)
+        self.failed_attempts = {}
+        self.current_fatal_alerts = []
+        self.last_log_count = 0
+        self.seen_logs.clear()
+        self.process_file(file_path, show_popup=True, scan_mode="gecmis")
 
     def process_file(self, file_path, show_popup=False, scan_mode="gecmis"):
         ioc_mode = self.combo_ioc_mode.currentText() if hasattr(self, 'combo_ioc_mode') else "Yerel"
@@ -568,14 +665,15 @@ class MainWindow(QMainWindow):
         self.current_fatal_alerts = [] 
         self.worker = LogWorker(file_path,ioc_mode,self.known_malicious_ips,vt_api_key,scan_mode,self.last_log_count)
         self.worker.log_ready.connect(self.add_single_log_row_live)
-        self.worker.finished.connect(lambda count: self.on_analysis_finished(count, show_popup, scan_mode))
+        self.worker.analysis_finished.connect(lambda count: self.on_analysis_finished(count, show_popup, scan_mode))
         self.worker.error.connect(self.on_analysis_error)
         self.worker.start()
 
     def stop_analysis_worker(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
-            self.worker.terminate()
-            self.worker.wait()
+            # 🛡️ GÜVENLİ KAPANIŞ: Thread'i zorla öldürme, nazikçe durmasını talep et
+            self.worker.requestInterruption()
+            self.worker.wait() # Kapanana kadar arayüzün kilitlenmemesi için bekler
         self.reset_load_button()
         QMessageBox.information(self, "İptal Edildi", "Log analizi durduruldu.")
 
@@ -589,7 +687,9 @@ class MainWindow(QMainWindow):
 
     def on_analysis_finished(self, total_count, show_popup, scan_mode):
         self.reset_load_button()
-        self.log_table.resizeColumnsToContents()
+        # 🚀 PERFORMANS İYİLEŞTİRMESİ: Sadece geçmiş taramalarda boyutlandır, canlı modda tabloyu yorma
+        if "canli" not in str(scan_mode):
+            self.log_table.resizeColumnsToContents()
         if total_count > 0: self.last_log_count = total_count
         self.update_dashboard()
         
@@ -661,12 +761,26 @@ class MainWindow(QMainWindow):
             if selected_column == "Tümü":
                 for col in range(self.log_table.columnCount()):
                     item = self.log_table.item(row, col)
-                    if item and search_text in item.text().lower(): match = True; break
+                    if item and search_text in item.text().lower(): 
+                        match = True
+                        break
             else:
                 col_idx = column_map[selected_column]
                 item = self.log_table.item(row, col_idx)
-                if item and search_text in item.text().lower(): match = True
+                if item:
+                    item_text = item.text().lower()
+                    # 🚀 UX DÜZELTMESİ: Eğer "Risk Seviyesi"nde "critical" aranıyorsa, "fatal" olanları da dahil et!
+                    if selected_column == "Risk Seviyesi" and search_text == "critical":
+                        if "critical" in item_text or "fatal" in item_text:
+                            match = True
+                    # Normal aramalar için standart kontrol
+                    elif search_text in item_text:
+                        match = True
+                        
             self.log_table.setRowHidden(row, not match)
+            
+        # Filtreleme döngüsü bittiği anda dashboard'u dinamik olarak güncelle
+        self.update_dashboard()
 
     def clear_filter(self):
         self.filter_input.clear()
@@ -887,8 +1001,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Uyarı", "Dışarı aktarılacak kayıt bulunamadı!")
             return
 
-        import pandas as pd
-        import openpyxl
+    
         df = pd.DataFrame(events)
 
         if "Excel" in secim:
