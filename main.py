@@ -52,7 +52,7 @@ class LogWorker(QThread):
                         # 🔴 DÜZELTME: raw_rows.reverse() SİLİNDİ! (Kronolojik işleme için)
                         for idx, row in enumerate(raw_rows):
                             if len(row) >= 6:
-                                log_row = [row[0].strip(), row[1].strip(), row[2].strip(), row[3].strip(), row[4].strip(), row[5].strip()]
+                                log_row = [row[0].strip(), row[1].strip(), row[2].strip(), row[3].strip(), row[4].strip(), row[5].strip(), str(idx)]
                             else:
                                 continue
                             self.log_ready.emit(log_row, idx)
@@ -93,6 +93,10 @@ class LogWorker(QThread):
                                 event_id = system.find(f'{ns}EventID').text if system.find(f'{ns}EventID') is not None else ""
                                 raw_time = system.find(f'{ns}TimeCreated').get('SystemTime') if system.find(f'{ns}TimeCreated') is not None else ""
                                 
+                                # Yeni eklenen EventRecordID çekme satırları
+                                record_id_el = system.find(f'{ns}EventRecordID')
+                                event_record_id = record_id_el.text if record_id_el is not None else str(idx)
+                                
                                 tarih, saat = "-", "-"
                                 if raw_time:
                                     dt_local = datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone()
@@ -106,7 +110,7 @@ class LogWorker(QThread):
                                         elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-": ip = val
                                         elif name == 'NewProcessName': durum = val.split("\\")[-1]
                                         
-                                self.log_ready.emit([tarih, saat, event_id, kullanici, ip, durum], idx)
+                                self.log_ready.emit([tarih, saat, event_id, kullanici, ip, durum, event_record_id], idx)
                             except Exception:
                                 continue
                                 
@@ -143,6 +147,10 @@ class LogWorker(QThread):
                     event_id = system.find(f'{ns}EventID').text if system.find(f'{ns}EventID') is not None else ""
                     raw_time = system.find(f'{ns}TimeCreated').get('SystemTime') if system.find(f'{ns}TimeCreated') is not None else ""
                     
+                    # 🎯 YENİ EKLENEN: EventRecordID değerini canlı logdan çekiyoruz
+                    record_id_el = system.find(f'{ns}EventRecordID')
+                    event_record_id = record_id_el.text if record_id_el is not None else f"live_{len(gecici_liste)}"
+                    
                     siralama_zamani = raw_time if raw_time else "0000"
                     tarih, saat = "-", "-"
                     if raw_time:
@@ -157,7 +165,8 @@ class LogWorker(QThread):
                             elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-": ip = val
                             elif name == 'NewProcessName': durum = val.split("\\")[-1]
                             
-                    gecici_liste.append((siralama_zamani, [tarih, saat, event_id, kullanici, ip, durum]))
+                    # 🎯 YENİ HALİ: event_record_id'yi listenin en sonuna (7. eleman olarak) ekledik
+                    gecici_liste.append((siralama_zamani, [tarih, saat, event_id, kullanici, ip, durum, event_record_id]))
                 except Exception:
                     continue
             
@@ -177,11 +186,15 @@ class MainWindow(QMainWindow):
     def add_single_log_row_live(self, log, row_idx):
         if len(log) < 6: return
         
-        # 1️⃣ Önce log verisini değişkenlere parçalıyoruz:
-        tarih, saat, event_id, kullanici, ip, durum = log
-        
-        # 2️⃣ Sonra log_id'yi tanımlıyoruz:
-        log_id = f"{tarih}|{saat}|{event_id}|{kullanici}|{ip}|{durum}"
+        # 1️⃣ Yeni sistem: Eğer log 7 elemanlıysa EventRecordID'yi al, yoksa satır numarasını kullan.
+        if len(log) >= 7:
+            tarih, saat, event_id, kullanici, ip, durum, record_id = log[:7]
+        else:
+            tarih, saat, event_id, kullanici, ip, durum = log[:6]
+            record_id = f"FALLBACK_ROW_{row_idx}"
+            
+        # 2️⃣ KESİN TEKİLLEŞTİRME: Windows'un verdiği eşsiz RecordID kimliği!
+        log_id = record_id
         
         # 3️⃣ Kontrollerimizi yapıyoruz:
         if log_id in self.seen_logs:
