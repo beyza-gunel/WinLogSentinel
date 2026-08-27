@@ -4,6 +4,7 @@ import csv
 import json
 import subprocess
 from datetime import datetime
+from datetime import timedelta
 
 import xml.etree.ElementTree as ET
 
@@ -200,8 +201,9 @@ class MainWindow(QMainWindow):
             return
 
         if not hasattr(self, 'failed_attempts'): self.failed_attempts = {}
-        # 🎯 Başarılı girişte o IP ve Kullanıcı kombinasyonunun sayacını sıfırla
-        if str(event_id) == "4624": self.failed_attempts[(kullanici, ip)] = 0
+        
+        if str(event_id) == "4624": 
+            self.failed_attempts[(kullanici, ip)] = []
 
         risk_skoru = 0
         tespit = "Normal Aktivite"
@@ -212,14 +214,25 @@ class MainWindow(QMainWindow):
             risk_skoru += 16
             tespit = "Kural 4: Şüpheli İşlem"
         elif str(event_id) == "4625":
-            # 🎯 İŞTE BURASI: Artık anahtarımız Kullanıcı ve IP kombinasyonu!
             hedef = (kullanici, ip)
-            self.failed_attempts[hedef] = self.failed_attempts.get(hedef, 0) + 1
-            deneme_sayisi = self.failed_attempts[hedef]
+            if hedef not in self.failed_attempts:
+                self.failed_attempts[hedef] = []
+                
+            try:
+                log_zamani = datetime.strptime(f"{tarih} {saat}", "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                log_zamani = datetime.now()
+                
+            self.failed_attempts[hedef].append(log_zamani)
+            
+            zaman_siniri = log_zamani - timedelta(minutes=5)
+            self.failed_attempts[hedef] = [z for z in self.failed_attempts[hedef] if z >= zaman_siniri]
+            
+            deneme_sayisi = len(self.failed_attempts[hedef])
             
             if deneme_sayisi >= 3:
                 risk_skoru += 20
-                tespit = f"Kural 1: Brute Force İhtimali ({deneme_sayisi}. Deneme)"
+                tespit = f"Kural 1: Brute Force İhtimali ({deneme_sayisi}. Deneme - Son 5 Dk)"
             else:
                 risk_skoru += 1
                 tespit = f"Kural 2: Başarısız Giriş ({deneme_sayisi}. Deneme)"
