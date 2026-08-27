@@ -263,6 +263,18 @@ class MainWindow(QMainWindow):
             renk = QColor(0, 0, 0)
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
+            
+            # 🎯 YENİ EKLENEN: Beyaz Liste Kontrolü ve Otomatik Engelleme (IPS Motoru)
+            if not hasattr(self, 'whitelisted_ips'): self.whitelisted_ips = set()
+            if not hasattr(self, 'already_blocked_ips'): self.already_blocked_ips = set() # 🧠 Hafıza oluştur
+            
+            # IP geçerliyse, Beyaz Listede DEĞİLSE ve DAHA ÖNCE ENGELLENMEDİYSE engelle:
+            if ip and ip != "-" and ip not in self.whitelisted_ips:
+                if ip not in self.already_blocked_ips:
+                    if hasattr(self, 'block_ip_in_firewall'):
+                        self.block_ip_in_firewall(ip)
+                        self.already_blocked_ips.add(ip) # 🧠 "Bunu engelledim" diye not al
+                        
         elif risk_skoru == 0:
             risk_seviyesi = "🟢 Low"
             renk = QColor(100, 255, 100)
@@ -370,7 +382,7 @@ class MainWindow(QMainWindow):
         self.btn_export.setEnabled(False)
         button_layout.addWidget(self.btn_export)
         
-        self.btn_manage_blocks = QPushButton("🛡️ Güvenlik Duvarı & Whitelist")
+        self.btn_manage_blocks = QPushButton("🛡️ Güvenlik Duvarı && Whitelist")
         self.btn_manage_blocks.setMinimumHeight(40)
         self.btn_manage_blocks.clicked.connect(self.show_blocked_ips_manager)
         button_layout.addWidget(self.btn_manage_blocks)
@@ -416,6 +428,7 @@ class MainWindow(QMainWindow):
         self.log_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         main_layout.addWidget(self.log_table)
         self.log_table.cellDoubleClicked.connect(self.show_event_details)
+        self.log_table.cellDoubleClicked.connect(self.manual_block_from_table)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_file_update)
@@ -481,6 +494,32 @@ class MainWindow(QMainWindow):
         self.lbl_top_user.setText(f'<span style="color: #ffb74d;">👤 En Aktif Kullanıcı: {en_aktif_user}</span>')
         self.lbl_risk_dist.setText(f'📊 Risk Dağılımı: 🟢 Low: {risk_sayilari["Low"]} | 🟡 Medium: {risk_sayilari["Medium"]} | 🟠 High: {risk_sayilari["High"]} | 🔴 Critical: {risk_sayilari["Critical"]} | ☠️ Fatal: {risk_sayilari["FATAL"]}')
         self.lbl_top_event_id.setText(f'<span style="color: #b366ff;">🆔 En Sık Event ID: {en_sik_event.split(" ")[0]}</span>')
+
+    def manual_block_from_table(self, row, column):
+        # Sadece IP Adresi sütununa (4. sütun) tıklandıysa çalışır
+        if column != 4:
+            return
+            
+        ip_item = self.log_table.item(row, 4)
+        if not ip_item: return
+        
+        ip_address = ip_item.text().strip()
+        
+        # IP boşsa, "-" ise veya localhost ise işlem yapma
+        if not ip_address or ip_address == "-" or ip_address == "127.0.0.1":
+            return
+            
+        from PySide6.QtWidgets import QMessageBox
+        cevap = QMessageBox.question(
+            self, 
+            "🎯 Manuel Hedefleme", 
+            f"Seçilen IP: {ip_address}\n\nBu IP adresini güvenlik duvarında manuel olarak engellemek istiyor musunuz?", 
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if cevap == QMessageBox.StandardButton.Yes:
+            self.block_ip_in_firewall(ip_address)
+            QMessageBox.information(self, "Hedef Vuruldu", f"Manuel Müdahale Başarılı:\n{ip_address} kalıcı olarak engellendi.")
 
     def load_log_file(self):
         if hasattr(self, 'worker') and self.worker.isRunning():
@@ -556,9 +595,10 @@ class MainWindow(QMainWindow):
         if scan_mode == "wevtutil_canli" and not self.timer.isActive():
             self.toggle_live_sync() # Otomatik olarak canlı izleme döngüsünü başlatır
             
+        # 1. MEVCUT: FATAL Uyarılar Özeti
         if hasattr(self, 'current_fatal_alerts') and self.current_fatal_alerts and show_popup:
             unique_alerts = list(set(self.current_fatal_alerts))
-            unique_alerts.sort(reverse=True)  # <-- İŞTE SIRALAMAYI DÜZELTEN SİHİRLİ SATIR
+            unique_alerts.sort(reverse=True)
             html_kayitlar = "<br>".join(unique_alerts)
             html_mesaj = f"<h3>🚨 DİKKAT! Log dosyasında Kritik (FATAL) seviyede tehditler tespit edildi!</h3><b>Bulunan Kayıtlar:</b><br><br>{html_kayitlar}"
             uyari = QMessageBox(self)
@@ -569,6 +609,14 @@ class MainWindow(QMainWindow):
             uyari.move((ekran.width() - 400) // 2, (ekran.height() - 200) // 2)
             uyari.exec()
             self.current_fatal_alerts = []
+
+        # 🎯 2. YENİ EKLENEN: Otomatik Engelleme (IPS) Özeti
+        if hasattr(self, 'session_blocked_ips') and self.session_blocked_ips and show_popup:
+            ip_listesi_str = "\n".join([f"• {ip}" for ip in self.session_blocked_ips])
+            mesaj = f"Tarama Tamamlandı!\n\nAşağıdaki {len(self.session_blocked_ips)} zararlı IP adresi tespit edilip güvenlik duvarında otomatik olarak engellendi:\n\n{ip_listesi_str}"
+            QMessageBox.information(self, "🛡️ Otomatik Savunma Raporu", mesaj)
+            # Gösterdikten sonra hafızayı sıfırla ki bir sonraki taramada eskileri tekrar göstermesin
+            self.session_blocked_ips.clear()
 
     def on_analysis_error(self, err_msg):
         self.reset_load_button()
@@ -629,17 +677,74 @@ class MainWindow(QMainWindow):
         rule_name = f"WinLogSentinel_Block_{ip_address}"
         kontrol_komutu = f'netsh advfirewall firewall show rule name="{rule_name}"'
         if subprocess.run(kontrol_komutu, shell=True, capture_output=True).returncode == 0: return 
+        
         komut = f'netsh advfirewall firewall add rule name="{rule_name}" dir=in action=block remoteip={ip_address}'
         try:
             subprocess.run(komut, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if not sessiz_mod: QMessageBox.information(self, "Başarılı", f"⛔ {ip_address} IP adresi engellendi!")
+            
+            # 🎯 1. CANLI BİLGİLENDİRME (KUYRUK SİSTEMİ): Mesajı kuyruğa ekle
+            if not hasattr(self, 'status_queue'): 
+                self.status_queue = []
+                self.is_status_queue_running = False
+                
+            self.status_queue.append(f"🛡️ Otomatik Savunma: {ip_address} engellendi!")
+            
+            # Eğer kuyruk trafiği o an akmıyorsa motoru başlat
+            if not self.is_status_queue_running:
+                self.process_status_queue()
+            
+            # 2. TOPLU ÖZET İÇİN HAFIZA: IP'yi oturum listesine kaydet
+            if not hasattr(self, 'session_blocked_ips'): 
+                self.session_blocked_ips = []
+            if ip_address not in self.session_blocked_ips:
+                self.session_blocked_ips.append(ip_address)
+                
         except subprocess.CalledProcessError:
-            if not sessiz_mod: QMessageBox.critical(self, "Yetki Hatası", "Yönetici olarak çalıştırdığınızdan emin olun.")
+            if not sessiz_mod: 
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.critical(self, "Yetki Hatası", "Güvenlik duvarı kuralı eklenemedi.\nLütfen Yönetici olarak çalıştırın.")
+
+    def show_scan_summary(self):
+        # Eğer hafızada IP yoksa veya liste hiç oluşturulmadıysa sessizce geç
+        if not hasattr(self, 'session_blocked_ips') or not self.session_blocked_ips:
+            return
+            
+        # Eğer IP varsa listeyi metne çevir ve ekranda göster
+        ip_listesi_str = "\n".join([f"• {ip}" for ip in self.session_blocked_ips])
+        mesaj = f"Tarama Tamamlandı!\n\nAşağıdaki {len(self.session_blocked_ips)} zararlı IP adresi tespit edilip güvenlik duvarında başarıyla engellendi:\n\n{ip_listesi_str}"
+        
+        QMessageBox.warning(self, "🛡️ Otomatik Savunma Raporu", mesaj)
+        
+        # Gösterdikten sonra hafızayı temizle (sıradaki tarama için sıfırla)
+        self.session_blocked_ips.clear()
+
+    def process_status_queue(self):
+        # Eğer kuyrukta gösterilecek mesaj varsa:
+        if hasattr(self, 'status_queue') and self.status_queue:
+            self.is_status_queue_running = True
+            mesaj = self.status_queue.pop(0) # İlk sıradaki mesajı al ve kuyruktan çıkar
+            
+            if hasattr(self, 'statusBar'):
+                self.statusBar().showMessage(mesaj, 2000) # Mesajı 2 saniye (2000 ms) göster
+                
+            # 2 saniye sonra bu fonksiyonu tekrar çalıştırıp sıradaki mesaja geç (Programı dondurmaz!)
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(2000, self.process_status_queue)
+        else:
+            # Kuyruk bittiyse sistemi bekleme moduna al
+            self.is_status_queue_running = False
 
     def show_blocked_ips_manager(self):
-        modlar = ["⛔ Engellenen IP'leri Listele (Engeli Kaldır)", "✅ Beyaz Liste Yönetimi"]
+        # 🎯 YENİ: Menüye 3. Seçenek Eklendi
+        modlar = [
+            "⛔ Engellenen IP'leri Listele (Engeli Kaldır)", 
+            "✅ Beyaz Liste Yönetimi", 
+            "📜 İşlem Geçmişi (Denetim Kaydı)"
+        ]
         secilen_mod, ok = QInputDialog.getItem(self, "🛡️ IP Yönetim Paneli", "İşlem:", modlar, 0, False)
         if not ok: return
+        
+        # 1. MOD: ENGELLENEN IP YÖNETİMİ VE ENGEL KALDIRMA
         if "⛔ Engellenen" in secilen_mod:
             engellenenler = []
             try:
@@ -649,11 +754,73 @@ class MainWindow(QMainWindow):
                         ip = line.split("WinLogSentinel_Block_")[1].strip()
                         if ip not in engellenenler: engellenenler.append(ip)
             except Exception: pass
-            if not engellenenler: QMessageBox.information(self, "Bilgi", "Engellenen IP yok."); return
+            
+            if not engellenenler: QMessageBox.information(self, "Bilgi", "Güvenlik duvarında engellenen IP yok."); return
+            
             secilen_ip, ok = QInputDialog.getItem(self, "Engellenenler", "Engelini kaldır:", engellenenler, 0, False)
             if ok and secilen_ip:
+                # 1. Güvenlik duvarından kuralı sil
                 subprocess.run(f'netsh advfirewall firewall delete rule name="WinLogSentinel_Block_{secilen_ip}"', shell=True)
-                QMessageBox.information(self, "Başarılı", f"{secilen_ip} engeli kaldırıldı.")
+                
+                # 🎯 YENİ: İşlemi denetim kaydına (Audit Log) yazdır
+                from datetime import datetime
+                zaman = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with open("denetim_kaydi.txt", "a", encoding="utf-8") as f:
+                    f.write(f"[{zaman}] 🔓 {secilen_ip} IP adresinin engeli kaldirildi.\n")
+                    
+                QMessageBox.information(self, "Başarılı", f"{secilen_ip} engeli kaldırıldı ve geçmişe kaydedildi.")
+                
+        # 2. MOD: BEYAZ LİSTE (WHITELIST) YÖNETİMİ
+        elif "✅ Beyaz" in secilen_mod:
+            if not hasattr(self, 'whitelisted_ips'): self.whitelisted_ips = set()
+            
+            w_modlar = ["📋 Listele", "➕ Yeni IP Ekle", "➖ IP Çıkar"]
+            w_secim, ok = QInputDialog.getItem(self, "Beyaz Liste", "Ne yapmak istiyorsun?", w_modlar, 0, False)
+            if not ok: return
+            
+            if "📋 Listele" in w_secim:
+                liste_str = "\n".join(self.whitelisted_ips) if self.whitelisted_ips else "Beyaz liste şu an boş."
+                QMessageBox.information(self, "Beyaz Liste", f"Güvenilir IP Adresleri:\n\n{liste_str}")
+                
+            elif "➕ Yeni IP Ekle" in w_secim:
+                yeni_ip, ok = QInputDialog.getText(self, "Beyaz Liste", "Güvenilir IP adresini girin (Örn: 192.168.1.15):")
+                if ok and yeni_ip.strip():
+                    self.whitelisted_ips.add(yeni_ip.strip())
+                    QMessageBox.information(self, "Başarılı", f"{yeni_ip} beyaz listeye eklendi. Artık otomatik engellenmeyecek.")
+                    
+            elif "➖ IP Çıkar" in w_secim:
+                if not self.whitelisted_ips:
+                    QMessageBox.information(self, "Bilgi", "Beyaz liste zaten boş.")
+                    return
+                silinecek_ip, ok = QInputDialog.getItem(self, "Beyaz Liste", "Çıkarılacak IP:", list(self.whitelisted_ips), 0, False)
+                if ok and silinecek_ip:
+                    self.whitelisted_ips.remove(silinecek_ip)
+                    QMessageBox.information(self, "Başarılı", f"{silinecek_ip} beyaz listeden çıkarıldı.")
+                    
+        # 🎯 3. YENİ MOD: İŞLEM GEÇMİŞİ (AUDIT LOG)
+        elif "📜 İşlem" in secilen_mod:
+            try:
+                import os
+                if not os.path.exists("denetim_kaydi.txt"):
+                    QMessageBox.information(self, "İşlem Geçmişi", "Henüz kaydedilmiş bir engel kaldırma işlemi yok.")
+                    return
+                    
+                with open("denetim_kaydi.txt", "r", encoding="utf-8") as f:
+                    gecmis = f.read().strip()
+                    
+                if not gecmis:
+                    QMessageBox.information(self, "İşlem Geçmişi", "Geçmiş kaydı boş.")
+                    return
+                    
+                # Uzun kayıtlar için "Show Details" özellikli genişletilebilir mesaj kutusu
+                msg = QMessageBox(self)
+                msg.setWindowTitle("📜 İşlem Geçmişi")
+                msg.setText("Sistemden engeli kaldırılan IP adresleri geçmişte kayıtlıdır.\nKayıtları görmek için 'Show Details...' (Ayrıntıları Göster) butonuna tıklayın.")
+                msg.setDetailedText(gecmis)
+                msg.exec()
+                
+            except Exception as e:
+                QMessageBox.warning(self, "Hata", f"Geçmiş okunamadı: {e}")
 
     def show_event_details(self, row, column):
         tarih = self.log_table.item(row, 0).text() if self.log_table.item(row, 0) else "-"
