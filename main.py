@@ -3,10 +3,7 @@ import os
 import csv
 import json
 import subprocess
-import numpy as np
 from datetime import datetime
-from collections import Counter
-from sklearn.ensemble import IsolationForest
 
 import xml.etree.ElementTree as ET
 
@@ -45,7 +42,6 @@ class LogWorker(QThread):
             else:
                 # Normal dosya yüklemeleri için standart EVTX/CSV okuyucu
                 if self.file_path.endswith('.csv'):
-                    import csv
                     with open(self.file_path, "r", encoding="utf-8") as file:
                         reader = csv.reader(file)
                         next(reader, None) 
@@ -174,10 +170,23 @@ class LogWorker(QThread):
         return logs_count
 
 class MainWindow(QMainWindow):
+
     def add_single_log_row_live(self, log, row_idx):
         if len(log) < 6: return
+        
+        # 1️⃣ Önce log verisini değişkenlere parçalıyoruz:
         tarih, saat, event_id, kullanici, ip, durum = log
         
+        # 2️⃣ Sonra log_id'yi tanımlıyoruz:
+        log_id = f"{tarih}|{saat}|{event_id}|{kullanici}|{ip}|{durum}"
+        
+        # 3️⃣ Kontrollerimizi yapıyoruz:
+        if log_id in self.seen_logs:
+            return
+        self.seen_logs.add(log_id)
+        
+        # ... tablodaki satır ekleme işlemlerin ...
+
         if "🟢 CANLI" in str(event_id) or "⏳ BİLGİ" in str(event_id) or "HATA" in str(event_id):
             self.log_table.insertRow(0)
             for col_idx, data in enumerate(log):
@@ -209,8 +218,7 @@ class MainWindow(QMainWindow):
                 risk_skoru += 1
                 tespit = f"Kural 2: Başarısız Giriş ({deneme_sayisi}. Deneme)"
 
-        known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99", "185.220.101.5"]
-        if ip in known_malicious_ips:
+        if ip in self.known_malicious_ips:
             risk_skoru += 50
             tespit = "🚨 IOC MATCH DETECTED (Zararlı IP Tespiti)"
 
@@ -381,6 +389,13 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.check_file_update)
         self.current_file = None
         self.last_log_count = 0 
+        self.seen_logs = set()
+
+        self.known_malicious_ips = [
+            "185.15.15.15",
+            "45.33.32.156",
+            "10.0.0.99",
+            "185.220.101.5"]
 
     def quick_filter(self, column, value):
         self.filter_column.setCurrentText(column)
@@ -405,7 +420,7 @@ class MainWindow(QMainWindow):
         if row_count == 0: return
             
         risk_sayilari = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "FATAL": 0}
-        ip_sayilari, user_sayilari, event_sayilari, kritik_sayisi = {}, {}, {}, 0
+        ip_sayilari, user_sayilari, event_sayilari = {}, {}, {}
 
         for row in range(row_count):
             if self.log_table.isRowHidden(row): continue
@@ -417,8 +432,8 @@ class MainWindow(QMainWindow):
             if "Low" in risk: risk_sayilari["Low"] += 1
             elif "Medium" in risk: risk_sayilari["Medium"] += 1
             elif "High" in risk: risk_sayilari["High"] += 1
-            elif "Critical" in risk: risk_sayilari["Critical"] += 1; kritik_sayisi += 1
-            elif "FATAL" in risk or "Fatal" in risk: risk_sayilari["FATAL"] += 1; kritik_sayisi += 1
+            elif "Critical" in risk: risk_sayilari["Critical"] += 1; 
+            elif "FATAL" in risk or "Fatal" in risk: risk_sayilari["FATAL"] += 1; 
                 
             if ip and ip != "-": ip_sayilari[ip] = ip_sayilari.get(ip, 0) + 1
             if user and user != "-": user_sayilari[user] = user_sayilari.get(user, 0) + 1
@@ -430,7 +445,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_total.setText(f'<span style="color: #66b3ff;">Toplam Olay: {row_count}</span>')
         self.lbl_top_ip.setText(f'<span style="color: #66b3ff;">🌐 En Aktif IP: {en_aktif_ip}</span>')
-        self.lbl_critical.setText(f'<span style="color: #ff6666;">🔴 Kritik Olay: {risk_sayilari["Critical"]}</span>')
+        self.lbl_critical.setText(f'<span style="color: #ff6666;">🔴 Kritik Olay: {risk_sayilari["Critical"] + risk_sayilari["FATAL"]}</span>')
         self.lbl_top_user.setText(f'<span style="color: #ffb74d;">👤 En Aktif Kullanıcı: {en_aktif_user}</span>')
         self.lbl_risk_dist.setText(f'📊 Risk Dağılımı: 🟢 Low: {risk_sayilari["Low"]} | 🟡 Medium: {risk_sayilari["Medium"]} | 🟠 High: {risk_sayilari["High"]} | 🔴 Critical: {risk_sayilari["Critical"]} | ☠️ Fatal: {risk_sayilari["FATAL"]}')
         self.lbl_top_event_id.setText(f'<span style="color: #b366ff;">🆔 En Sık Event ID: {en_sik_event.split(" ")[0]}</span>')
@@ -464,11 +479,11 @@ class MainWindow(QMainWindow):
             self.failed_attempts = {}
             self.current_fatal_alerts = []
             self.last_log_count = 0
+            self.seen_logs.clear()
             self.process_file(file_path, show_popup=True, scan_mode=scan_mode)
 
     def process_file(self, file_path, show_popup=False, scan_mode="gecmis"):
         ioc_mode = self.combo_ioc_mode.currentText() if hasattr(self, 'combo_ioc_mode') else "Yerel"
-        known_malicious_ips = ["185.15.15.15", "45.33.32.156", "10.0.0.99", "185.220.101.5"]
         vt_api_key = "3573d24e8fb924cc5180ed5655b31717aa405f6f86c2e2e295b217050a67b7e1"
 
         self.btn_load_log.setText("⏹️ Akışı Durdur (İptal Et)")
@@ -479,7 +494,7 @@ class MainWindow(QMainWindow):
         self.btn_load_log.clicked.connect(self.stop_analysis_worker)
         
         self.current_fatal_alerts = [] 
-        self.worker = LogWorker(file_path, ioc_mode, known_malicious_ips, vt_api_key, scan_mode, self.last_log_count)
+        self.worker = LogWorker(file_path,ioc_mode,self.known_malicious_ips,vt_api_key,scan_mode,self.last_log_count)
         self.worker.log_ready.connect(self.add_single_log_row_live)
         self.worker.finished.connect(lambda count: self.on_analysis_finished(count, show_popup, scan_mode))
         self.worker.error.connect(self.on_analysis_error)
@@ -665,13 +680,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Başarılı", "CSV raporu başarıyla kaydedildi.")
 
         elif "JSON" in secim:
-            path, _ = QFileDialog.getSaveFileName(self, "Kaydet", "Rapor.json", "JSON (*.json)")
-            if path:
-                df.to_csv(path, index=False, encoding='utf-8') # Alternatif veya direkt json
-                import json
-                with open(path, 'w', encoding='utf-8') as jf:
-                    json.dump(events, jf, ensure_ascii=False, indent=4)
-                QMessageBox.information(self, "Başarılı", "JSON raporu başarıyla kaydedildi.")
+            path, _ = QFileDialog.getSaveFileName(
+        self, "Kaydet", "Rapor.json", "JSON (*.json)"
+        )
+
+        if path:
+            with open(path, 'w', encoding='utf-8') as jf:
+                json.dump(events, jf, ensure_ascii=False, indent=4)
+
+        QMessageBox.information(
+            self,
+            "Başarılı",
+            "JSON raporu başarıyla kaydedildi."
+        )
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
