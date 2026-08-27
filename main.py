@@ -47,7 +47,8 @@ class LogWorker(QThread):
                         next(reader, None) 
                         raw_rows = list(reader)
                         total_records_processed = len(raw_rows)
-                        raw_rows.reverse()
+                        
+                        # 🔴 DÜZELTME: raw_rows.reverse() SİLİNDİ! (Kronolojik işleme için)
                         for idx, row in enumerate(raw_rows):
                             if len(row) >= 6:
                                 log_row = [row[0].strip(), row[1].strip(), row[2].strip(), row[3].strip(), row[4].strip(), row[5].strip()]
@@ -73,11 +74,12 @@ class LogWorker(QThread):
                         total_records_processed = len(all_records)
                         
                         if self.scan_mode == "canli_sadece":
-                            self.log_ready.emit(["-", "-", "🟢 CANLI DİNLEME AKTİF", "Sistem", f"Geçmiş {total_records_processed} log yoksayıldı. Sistem dinleniyor..."], 0)
+                            self.log_ready.emit(["-", "-", "🟢 CANLI DİNLEME AKTİF", "System", "-", f"Geçmiş {total_records_processed} log yoksayıldı. Sistem dinleniyor..."], 0)
                             return total_records_processed
                             
                         records_to_process = all_records[self.last_count:total_records_processed] if self.scan_mode == "canli_guncelleme" else all_records
-                        records_to_process.reverse()
+                        
+                        # 🔴 DÜZELTME: records_to_process.reverse() SİLİNDİ! (Kronolojik işleme için)
                         
                         ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
                         for idx, record in enumerate(records_to_process):
