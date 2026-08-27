@@ -124,63 +124,63 @@ class LogWorker(QThread):
             self.error.emit(str(e))
 
     def parse_wevtutil_live(self):
-        logs_count = 0
-        try:
-            cmd = 'wevtutil qe Security /c:50 /rd:true /f:xml'
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-            if result.returncode != 0:
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='cp1254', errors='ignore')
+            logs_count = 0
+            try:
+                cmd = 'wevtutil qe Security /c:50 /rd:true /f:xml'
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+                if result.returncode != 0:
+                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='cp1254', errors='ignore')
+                    
+                xml_output = f"<Events>{result.stdout}</Events>"
+                root = ET.fromstring(xml_output)
+                ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
                 
-            xml_output = f"<Events>{result.stdout}</Events>"
-            root = ET.fromstring(xml_output)
-            ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
-            
-            records = root.findall(f'.//{ns}Event')
-            logs_count = len(records)
-            
-            gecici_liste = []
-            for event in records:
-                try:
-                    system = event.find(f'{ns}System')
-                    event_data = event.find(f'{ns}EventData')
-                    if system is None: continue
-                    
-                    event_id = system.find(f'{ns}EventID').text if system.find(f'{ns}EventID') is not None else ""
-                    raw_time = system.find(f'{ns}TimeCreated').get('SystemTime') if system.find(f'{ns}TimeCreated') is not None else ""
-                    
-                    # 🎯 YENİ EKLENEN: EventRecordID değerini canlı logdan çekiyoruz
-                    record_id_el = system.find(f'{ns}EventRecordID')
-                    event_record_id = record_id_el.text if record_id_el is not None else f"live_{len(gecici_liste)}"
-                    
-                    siralama_zamani = raw_time if raw_time else "0000"
-                    tarih, saat = "-", "-"
-                    if raw_time:
-                        dt_local = datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone()
-                        tarih, saat = dt_local.strftime("%Y-%m-%d"), dt_local.strftime("%H:%M:%S")
+                records = root.findall(f'.//{ns}Event')
+                logs_count = len(records)
+                
+                gecici_liste = []
+                for event in records:
+                    try:
+                        system = event.find(f'{ns}System')
+                        event_data = event.find(f'{ns}EventData')
+                        if system is None: continue
                         
-                    kullanici, ip, durum = "System", "-", "Bilgi"
-                    if event_data is not None:
-                        for data in event_data.findall(f'{ns}Data'):
-                            name, val = data.get('Name'), data.text or ""
-                            if name in ['TargetUserName', 'SubjectUserName'] and val and val != "SYSTEM": kullanici = val
-                            elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-": ip = val
-                            elif name == 'NewProcessName': durum = val.split("\\")[-1]
+                        event_id = system.find(f'{ns}EventID').text if system.find(f'{ns}EventID') is not None else ""
+                        raw_time = system.find(f'{ns}TimeCreated').get('SystemTime') if system.find(f'{ns}TimeCreated') is not None else ""
+                        
+                        # 🎯 YENİ EKLENEN: EventRecordID değerini canlı logdan çekiyoruz
+                        record_id_el = system.find(f'{ns}EventRecordID')
+                        event_record_id = record_id_el.text if record_id_el is not None else f"live_{len(gecici_liste)}"
+                        
+                        siralama_zamani = raw_time if raw_time else "0000"
+                        tarih, saat = "-", "-"
+                        if raw_time:
+                            dt_local = datetime.fromisoformat(raw_time.replace("Z", "+00:00")).astimezone()
+                            tarih, saat = dt_local.strftime("%Y-%m-%d"), dt_local.strftime("%H:%M:%S")
                             
-                    # 🎯 YENİ HALİ: event_record_id'yi listenin en sonuna (7. eleman olarak) ekledik
-                    gecici_liste.append((siralama_zamani, [tarih, saat, event_id, kullanici, ip, durum, event_record_id]))
-                except Exception:
-                    continue
-            
-            # 🎯 KESİN ÇÖZÜM: Zaman damgasına (ISO time) göre EN YENİ HER ZAMAN EN ÜSTTE olacak şekilde sırala
-            gecici_liste.sort(key=lambda x: x[0], reverse=False)
-
-            for idx, item in enumerate(gecici_liste):
-                self.log_ready.emit(item[1], idx)
+                        kullanici, ip, durum = "System", "-", "Bilgi"
+                        if event_data is not None:
+                            for data in event_data.findall(f'{ns}Data'):
+                                name, val = data.get('Name'), data.text or ""
+                                if name in ['TargetUserName', 'SubjectUserName'] and val and val != "SYSTEM": kullanici = val
+                                elif name in ['IpAddress', 'WorkstationName', 'SourceNetworkAddress'] and val and val != "-": ip = val
+                                elif name == 'NewProcessName': durum = val.split("\\")[-1]
+                                
+                        # 🎯 YENİ HALİ: event_record_id'yi listenin en sonuna (7. eleman olarak) ekledik
+                        gecici_liste.append((siralama_zamani, [tarih, saat, event_id, kullanici, ip, durum, event_record_id]))
+                    except Exception:
+                        continue
                 
-        except Exception as e:
-            print(f"Wevtutil hata: {e}")
-            
-        return logs_count
+                # 🎯 KESİN ÇÖZÜM: Zaman damgasına (ISO time) göre EN YENİ HER ZAMAN EN ÜSTTE olacak şekilde sırala
+                gecici_liste.sort(key=lambda x: x[0], reverse=False)
+    
+                for idx, item in enumerate(gecici_liste):
+                    self.log_ready.emit(item[1], idx)
+                    
+            except Exception as e:
+                print(f"Wevtutil hata: {e}")
+                
+            return logs_count
 
 class MainWindow(QMainWindow):
 
