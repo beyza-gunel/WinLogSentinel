@@ -6,6 +6,7 @@ import subprocess
 import ipaddress
 import pandas as pd
 import openpyxl
+import requests
 from datetime import datetime
 from datetime import timedelta
 
@@ -78,18 +79,7 @@ class LogWorker(QThread):
                         else:
                             continue
                         self.log_ready.emit(log_row, idx)
-                        
-                        # 🔴 DÜZELTME: raw_rows.reverse() SİLİNDİ! (Kronolojik işleme için)
-                        for idx, row in enumerate(raw_rows):
-                            # 🛡️ 1. GÜVENLİ KAPANIŞ KONTROLÜ (CSV DÖNGÜSÜ)
-                            if self.isInterruptionRequested(): 
-                                break
-
-                            if len(row) >= 6:
-                                log_row = [row[0].strip(), row[1].strip(), row[2].strip(), row[3].strip(), row[4].strip(), row[5].strip(), str(idx)]
-                            else:
-                                continue
-                            self.log_ready.emit(log_row, idx)
+                    
                 else:
                     import Evtx.Evtx as evtx
                     import tempfile
@@ -308,17 +298,31 @@ class MainWindow(QMainWindow):
                 risk_skoru += 1
                 tespit = f"Kural 2: Başarısız Giriş ({deneme_sayisi}. Deneme)"
 
-        # 🚀 GÜNCELLENMİŞ KONTROL: Hem gerçek zararlı IP'leri hem de test IP'sini ayrı ayrı yakala
-        if ip in self.known_malicious_ips:
-            risk_skoru += 50
-            tespit = "🚨 IOC MATCH DETECTED (Zararlı IP Tespiti)" 
-        elif ip in self.test_ips:
-            risk_skoru += 50
-            tespit = "🧪 TEST IOC MATCH (Test Amaçlı IP Tespiti)"
+        # 🚀 VİRUSTOTAL & YEREL IOC ENTEGRASYONU
+        secili_mod = self.combo_ioc_mode.currentText() if hasattr(self, 'combo_ioc_mode') else "Yerel Veritabanı (Offline)"
+        
+        if secili_mod == "VirusTotal Canlı Sorgu (Online)" and ip and ip != "-":
+            # ONLİNE MOD
+            if self.check_virustotal(ip):
+                risk_skoru += 50
+                tespit = "🚨 VT DETECTED (VirusTotal Zararlı Tespiti)"
+            elif ip in self.test_ips:
+                risk_skoru += 50
+                tespit = "🧪 TEST IOC MATCH (Test Amaçlı IP Tespiti)"
+        else:
+            # OFFLINE MOD (Yerel Veritabanı)
+            if ip in self.known_malicious_ips:
+                risk_skoru += 50
+                tespit = "🚨 IOC MATCH DETECTED (Zararlı IP Tespiti)" 
+            elif ip in self.test_ips:
+                risk_skoru += 50
+                tespit = "🧪 TEST IOC MATCH (Test Amaçlı IP Tespiti)"
 
         yazi_rengi = QColor(0, 0, 0)
         kalin_yazi = False
-        if "IOC MATCH" in tespit or risk_skoru >= 20:
+        
+        # 🚀 DÜZELTME: VT DETECTED uyarıları da FATAL tablosuna düşsün diye "DETECTED" eklendi
+        if "DETECTED" in tespit or "MATCH" in tespit or risk_skoru >= 20:
             risk_seviyesi = "☠️ FATAL"
             if not hasattr(self, 'current_fatal_alerts'): self.current_fatal_alerts = []
             self.current_fatal_alerts.append(f"⏱️ {saat} | IP: {ip} - {tespit}")
@@ -379,6 +383,49 @@ class MainWindow(QMainWindow):
                 kalin_font = QFont(); kalin_font.setBold(True); hucre.setFont(kalin_font)
             self.log_table.setItem(target_row, col_idx, hucre) 
 
+    def check_virustotal(self, ip):
+        import requests # Kütüphaneyi sadece gerektiğinde burada çağırıyoruz
+        
+        # 1. Önbellek (Cache) yoksa otomatik oluştur
+        if not hasattr(self, 'vt_cache'):
+            self.vt_cache = {}
+
+        # 2. Geçersiz veya Yerel IP'leri (10.x, 192.168.x vb.) hiç sorgulama, direkt geç
+        if not ip or ip == "-" or ip.startswith(("10.", "192.168.", "172.", "127.")):
+            self.vt_cache[ip] = False
+            return False
+
+        # 3. Bu IP daha önce sorgulandıysa, VT'ye gitmeden direkt hafızadaki sonucu dön
+        if ip in self.vt_cache:
+            return self.vt_cache[ip]
+
+        # 4. Gerçek VT API v3 Sorgusu
+        # 🚀 DÜZELTME: Kendi API anahtarını buraya, tırnakların içine yazıyorsun
+        api_key = "3573d24e8fb924cc5180ed5655b31717aa405f6f86c2e2e295b217050a67b7e1" 
+        
+        if not api_key or api_key == "GIZLI_API_ANAHTARINIZI_BURAYA_YAZIN":
+            print("Uyarı: VirusTotal API Anahtarı eksik!")
+            return False
+
+        url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
+        headers = {"accept": "application/json", "x-apikey": api_key}
+
+        try:
+            response = requests.get(url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                malicious_count = data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {}).get("malicious", 0)
+                # 🚀 YENİ EKLENEN SATIR: VT'nin kaç motorla zararlı bulduğunu terminale yazdır
+                print(f"🎯 VT Canlı Sonuç -> IP: {ip} | Zararlı Bulan Motor Sayısı: {malicious_count}")
+                is_malicious = malicious_count > 0
+                self.vt_cache[ip] = is_malicious
+                return is_malicious
+            else:
+                print(f"VT API Hatası: {ip} sorgulanamadı. Status Code: {response.status_code}")
+                return False
+        except Exception as e:
+            print(f"VT Kod Hatası: {e}")
+            return False
 
     def __init__(self):
         super().__init__()
