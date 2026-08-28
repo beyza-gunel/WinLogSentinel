@@ -158,7 +158,8 @@ class LogWorker(QThread):
     def parse_wevtutil_live(self):
             logs_count = 0
             try:
-                cmd = 'wevtutil qe Security /c:50 /rd:true /f:xml'
+                # 🚀 DÜZELTME: /c:50 sınırını tamamen kaldırdık, artık arada olay kaçmayacak!
+                cmd = 'wevtutil qe Security /rd:true /f:xml'
                 result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 if result.returncode != 0:
                     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='cp1254', errors='ignore')
