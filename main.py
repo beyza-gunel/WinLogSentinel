@@ -399,12 +399,12 @@ class MainWindow(QMainWindow):
         if ip in self.vt_cache:
             return self.vt_cache[ip]
 
-        # 4. Gerçek VT API v3 Sorgusu
-        # 🚀 DÜZELTME: Kendi API anahtarını buraya, tırnakların içine yazıyorsun
-        api_key = "3573d24e8fb924cc5180ed5655b31717aa405f6f86c2e2e295b217050a67b7e1" 
+        # 4. Güvenli VT API v3 Sorgusu (Environment Variable'dan okur)
+        import os
+        api_key = os.getenv("VT_API_KEY") 
         
-        if not api_key or api_key == "GIZLI_API_ANAHTARINIZI_BURAYA_YAZIN":
-            print("Uyarı: VirusTotal API Anahtarı eksik!")
+        if not api_key:
+            print("Uyarı: Sistemde VT_API_KEY tanımlı değil!")
             return False
 
         url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
@@ -415,8 +415,6 @@ class MainWindow(QMainWindow):
             if response.status_code == 200:
                 data = response.json()
                 malicious_count = data.get("data", {}).get("attributes", {}).get("last_analysis_stats", {}).get("malicious", 0)
-                # 🚀 YENİ EKLENEN SATIR: VT'nin kaç motorla zararlı bulduğunu terminale yazdır
-                print(f"🎯 VT Canlı Sonuç -> IP: {ip} | Zararlı Bulan Motor Sayısı: {malicious_count}")
                 is_malicious = malicious_count > 0
                 self.vt_cache[ip] = is_malicious
                 return is_malicious
