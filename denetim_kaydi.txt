@@ -2,3 +2,60 @@
 [2026-08-27 14:29:51] 🔓 192.168.1.10 IP adresinin engeli kaldirildi.
 [2026-08-27 14:31:35] 🔓 10.0.0.15 IP adresinin engeli kaldirildi.
 [2026-08-27 14:31:50] 🔓 192.168.1.75 IP adresinin engeli kaldirildi.
+[2026-08-29 12:38:52] 🔓 192.168.1.200 IP adresinin engeli kaldirildi.
+[2026-08-29 13:08:50] OTOMATİK ENGELLEME: 185.15.15.15 adresi güvenlik duvarında otomatik olarak engellendi.
+[2026-08-29 13:08:50] OTOMATİK ENGELLEME (ZATEN VAR): 185.15.15.15 adresi halihazırda güvenlik duvarındaydı.
+[2026-08-29 13:13:15] OTOMATİK ENGELLEME: 185.15.15.15 adresi güvenlik duvarında otomatik olarak engellendi.
+[2026-08-29 13:13:15] OTOMATİK ENGELLEME (ZATEN VAR): 185.15.15.15 adresi halihazırda güvenlik duvarındaydı.
+[2026-08-29 13:23:57] OTOMATİK ENGELLEME: 185.15.15.15 adresi güvenlik duvarında otomatik olarak engellendi.
+[2026-08-29 13:23:58] OTOMATİK ENGELLEME (ZATEN VAR): 185.15.15.15 adresi halihazırda güvenlik duvarındaydı.
+[2026-08-29 13:24:36] OTOMATİK ENGELLEME: 185.15.15.15 adresi güvenlik duvarında otomatik olarak engellendi.
+[2026-08-29 13:24:36] OTOMATİK ENGELLEME (ZATEN VAR): 185.15.15.15 adresi halihazırda güvenlik duvarındaydı.
+[2026-08-29 13:26:14] OTOMATİK ENGELLEME: 185.15.15.15 adresi güvenlik duvarında otomatik olarak engellendi.
+[2026-08-29 13:26:14] OTOMATİK ENGELLEME (ZATEN VAR): 185.15.15.15 adresi halihazırda güvenlik duvarındaydı.
+[2026-08-29 17:00:23] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 18:15:32] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 18:15:54] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 18:17:03] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 18:24:13] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 18:24:22] Windows Security canlı izleme durduruldu.
+[2026-08-29 18:24:28] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 18:27:58] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 18:28:34] Windows Security canlı izleme durduruldu.
+[2026-08-29 18:28:42] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 18:30:56] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 18:31:03] Windows Security canlı izleme durduruldu.
+[2026-08-29 18:31:08] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 18:39:35] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 18:39:47] Windows Security canlı izleme durduruldu.
+[2026-08-29 18:40:03] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 18:46:49] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 18:47:02] Windows Security canlı izleme durduruldu.
+[2026-08-29 18:47:06] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 18:50:27] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 18:50:35] Windows Security canlı izleme durduruldu.
+[2026-08-29 18:50:40] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 18:50:54] 🔓 185.220.101.5 IP adresinin engeli kaldırıldı.
+[2026-08-29 20:49:16] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 20:49:32] Windows Security canlı izleme durduruldu.
+[2026-08-29 20:49:38] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 20:51:57] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 20:52:40] MANUEL ENGELLEME: 152.119.1.53 adresi kullanıcı tarafından güvenlik duvarına eklendi.
+[2026-08-29 20:53:42] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 21:05:21] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 21:05:45] Windows Security canlı izleme durduruldu.
+[2026-08-29 21:05:50] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 21:16:20] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 21:16:39] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 21:18:22] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 21:18:28] OTOMATİK ENGELLEME (YENİ): 185.15.15.15 adresi güvenlik duvarında engellendi.
+[2026-08-29 22:14:06] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 22:14:20] Windows Security canlı izleme durduruldu.
+[2026-08-29 22:14:20] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 22:14:29] Windows Security canlı izleme durduruldu.
+[2026-08-29 22:14:47] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 22:22:45] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 22:22:57] Windows Security canlı izleme durduruldu.
+[2026-08-29 22:23:11] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-29 22:26:31] Windows Security canlı izleme modu başlatıldı.
+[2026-08-29 22:26:57] Windows Security canlı izleme modu başlatıldı.
