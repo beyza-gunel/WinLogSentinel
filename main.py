@@ -8,10 +8,6 @@ import os
 import requests
 import ipaddress
 import Evtx.Evtx as evtx
-import tempfile
-import time
-import shutil
-from PySide6.QtWidgets import QMessageBox
 from datetime import datetime, timedelta
 from collections import deque
 
@@ -208,15 +204,7 @@ class LogWorker(QThread):
                             total_records_processed += 1
 
             else:    
-                # 🚀 STATİK EVTX OKUMA VE BATCH GÖNDERİM MODU
-                unique_name = f"WinLogSentinel_{int(time.time() * 1000)}.evtx"
-                temp_path = os.path.join(tempfile.gettempdir(), unique_name)
-                shutil_copied = False
-                try:
-                    shutil.copy2(self.file_path, temp_path)
-                    shutil_copied = True
-                except Exception:
-                    temp_path = self.file_path
+                temp_path = self.file_path
                     
                 with evtx.Evtx(temp_path) as evtx_file:
                     ns = '{http://schemas.microsoft.com/win/2004/08/events/event}'
@@ -290,9 +278,6 @@ class LogWorker(QThread):
                     if gecici_batch:
                         self.logs_batch_ready.emit(gecici_batch)
                         
-                if shutil_copied and os.path.exists(temp_path):
-                    try: os.remove(temp_path)
-                    except Exception: pass
             
             self.analysis_finished.emit(total_records_processed)
             
@@ -473,7 +458,6 @@ class LogWorker(QThread):
 class MainWindow(QMainWindow):
 
     def add_log_rows_batch(self, logs):
-        """EVTX kayıtlarını GUI'ye toplu ve daha verimli şekilde ekler."""
         if not logs:
             return
 
@@ -481,29 +465,28 @@ class MainWindow(QMainWindow):
         self.log_table.setUpdatesEnabled(False)
 
         try:
+            old_row_count = self.log_table.rowCount()
             batch_size = len(logs)
 
-            # YENİ KISIM: insertRows() olmadığı için boş satırları bir döngüyle en üste açıyoruz.
-            # setUpdatesEnabled(False) olduğu için bu işlem arayüzü dondurmaz.
-            for _ in range(batch_size):
-                self.log_table.insertRow(0)
+            self.log_table.setRowCount(old_row_count + batch_size)
 
-            # add_single_log_row_live() kayıt işleme mantığını yürütecek,
-            # fakat artık tekrar insertRow() yapmayacak.
             for idx, log in enumerate(logs):
+                target_row = old_row_count + idx
+
                 self.add_single_log_row_live(
                     log,
                     idx,
                     insert_row=False,
-                    target_row=batch_size - 1 - idx
+                    target_row=target_row
                 )
 
         finally:
             self._batch_update = False
             self.log_table.setUpdatesEnabled(True)
 
-        # Dashboard sadece batch sonunda bir kez hesaplanır.
         self.update_dashboard()
+        
+        QTimer.singleShot(50, self.log_table.scrollToBottom)
 
     def update_security_last_id(self, last_id):
         """Windows Security canlı izlemede son taranan record ID'yi günceller."""
@@ -517,8 +500,7 @@ class MainWindow(QMainWindow):
         if not ip_address or ip_address == "-" or ip_address.startswith("🧪") or ip_address.startswith("🚨"):
             # Geçersiz veya IP formatında olmayan stringleri engellemeye çalışmama koruması
             return False
-            
-        import subprocess
+
         rule_name = f"WinLogSentinel_Block_{ip_address}"
         try:
             # Yönetici yetkisi gerektiren netsh komutu ile gelen/giden (inbound/outbound) engelleme kuralı
@@ -562,16 +544,17 @@ class MainWindow(QMainWindow):
         # 1️⃣ ÖNCE BİLGİ/SİSTEM MESAJLARINI YAKALA (Tekilleştirmeye Girmemeli!)
         event_id_str = str(log[2])
         if "🟢 CANLI" in event_id_str or "⏳ BİLGİ" in event_id_str or "HATA" in event_id_str:
-            self.log_table.insertRow(0)
+            target_row = self.log_table.rowCount()
+            self.log_table.insertRow(target_row)
             
-            # Tablonun sütun sınırını aşmamak için güvenli döngü
             max_col = min(len(log), self.log_table.columnCount())
             for col_idx in range(max_col):
                 hucre = QTableWidgetItem(str(log[col_idx]))
                 hucre.setBackground(QColor(0, 80, 0))
                 hucre.setForeground(QColor(255, 255, 255))
                 font = QFont(); font.setBold(True); hucre.setFont(font)
-                self.log_table.setItem(0, col_idx, hucre)
+                self.log_table.setItem(target_row, col_idx, hucre)
+            self.log_table.scrollToBottom()
             return
 
         # 2️⃣ GERÇEK LOGLARI AYIR (8, 7 veya 6 elemanlı paket desteği)
@@ -677,7 +660,7 @@ class MainWindow(QMainWindow):
             renk = QColor(0, 0, 0)
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
-            risk_seviyesi = "🔴 Critical"
+            risk_seviyesi = "☠️ Fatal"
                     
         elif risk_skoru == 0:
             risk_seviyesi = "🟢 Low"
@@ -694,6 +677,9 @@ class MainWindow(QMainWindow):
             yazi_rengi = QColor(255, 255, 255)
             kalin_yazi = True
 
+        if risk_seviyesi in ["🔴 Critical", "☠️ Fatal"]:
+            self.queue_status_message(f"🚨 DİKKAT: {ip} adresinden Kritik/Fatal aktivite! ({tespit})")
+
         event_sozlugu = {
             "4624": "Başarılı Oturum Açma", "4625": "Hatalı Şifre Denemesi", "4634": "Oturum Kapatıldı",
             "4647": "Kullanıcı Çıkış Yaptı", "4672": "Özel Yetki (Admin) Kullanıldı", "4688": "Yeni Program/Komut Çalıştırıldı",
@@ -705,8 +691,15 @@ class MainWindow(QMainWindow):
         aciklama = event_sozlugu.get(str(event_id), "Standart Sistem İşlemi")
         gosterilecek_event = f"{event_id} ({aciklama})"
 
+        self.register_dashboard_stat(
+            event_id,
+            kullanici,
+            ip,
+            risk_seviyesi
+        )
+
         if insert_row:
-            target_row = 0
+            target_row = self.log_table.rowCount()
             self.log_table.insertRow(target_row)
         elif target_row is None:
             return
@@ -726,6 +719,12 @@ class MainWindow(QMainWindow):
         if not getattr(self, '_batch_update', False):
             self.update_dashboard()
 
+        if insert_row:
+            # Arayüzün güncellenmesi için 50 milisaniye bekleyip sonra en alta kaydırır
+            QTimer.singleShot(50, self.log_table.scrollToBottom)
+
+        
+
     def start_live_timer(self):
         """Sadece CSV dosyası canlı takibini başlatır."""
         if not self.timer.isActive():
@@ -737,18 +736,44 @@ class MainWindow(QMainWindow):
         if getattr(self, 'is_security_live_active', False):
             if self.security_timer.isActive():
                 self.security_timer.stop()
+
             self.is_security_live_active = False
-            self.btn_security_live.setText("🛡️ Windows Security Canlı İzle")
-            self.btn_security_live.setStyleSheet("") 
-            self.add_audit_log("Windows Security canlı izleme durduruldu.")
+
+            self.notifications_enabled = False
+            self.status_queue.clear()
+
+            self.btn_security_live.setText(
+                "🛡️ Windows Security Canlı İzle"
+            )
+
+            self.btn_security_live.setStyleSheet("")
+
+            self.add_audit_log(
+                "Windows Security canlı izleme durduruldu."
+            )
+
             return
 
-        # Çalışmıyorsa başlat
-        # NOT: Tabloyu (setRowCount(0)) bilerek SİLMİYORUZ ki duraklat-başlat yapıldığında ekrandaki veriler kaybolmasın.
+        QApplication.processEvents()
         
+        # 🚀 AKILLI TEMİZLİK: Eğer ekranda bir statik dosya (.evtx veya .csv) açıksa temizle.
+        # Ama sadece canlı izleme duraklatılmışsa SİLME (eski canlı loglar ekranda kalsın).
+        if getattr(self, 'current_file', None) is not None:
+            self.log_table.setRowCount(0)
+            self.seen_logs_deque.clear()
+            self.seen_logs_set.clear()
+            self.reset_dashboard_stats()
+            self.failed_attempts = {}
+            self.current_fatal_alerts = []
+            self.current_file = None  # Artık dosya modunda değiliz
+            self.update_dashboard()
+
         # Eğer o sırada CSV canlı takibi çalışıyorsa çakışmaması için onu durdur
         if hasattr(self, 'timer') and self.timer.isActive():
             self.timer.stop()
+
+        self.notifications_enabled = True
+        self.status_queue.clear()
         
         # __init__ içinde zaten tanımlı olduğu için direkt başlatıyoruz
         self.security_timer.start(3000) 
@@ -760,6 +785,24 @@ class MainWindow(QMainWindow):
         
         # Timer'ın 3 saniye beklemesini beklemeden ilk verileri hemen çekmesi için manuel tetikliyoruz
         self.run_live_update()
+
+    def queue_status_message(self, message):
+        """Bildirimleri yalnızca canlı izleme modunda kuyruğa ekler."""
+    
+        if not self.notifications_enabled:
+            return
+
+        if message not in self.status_queue:
+            self.status_queue.append(message)
+
+    def process_status_queue(self):
+        if not self.notifications_enabled:
+            self.status_queue.clear()
+            return
+
+        if self.status_queue:
+            msg = self.status_queue.pop(0)
+            self.statusBar().showMessage(msg, 2000)
 
     def __init__(self):
         super().__init__()
@@ -798,13 +841,24 @@ class MainWindow(QMainWindow):
         self.lbl_top_user = ClickableLabel("👤 En Aktif Kullanıcı: -")
         self.lbl_top_event_id = ClickableLabel("🆔 En Sık Event ID: -")
 
+        self.notifications_enabled = False
+
+        self.status_queue = []
+        self.status_timer = QTimer(self)
+        self.status_timer.timeout.connect(self.process_status_queue)
+        self.status_timer.start(2500) # Her 2.5 saniyede bir sıradaki bildirimi gösterir
+
         self.lbl_total.clicked.connect(lambda: self.clear_filter())
         self.lbl_critical.clicked.connect(lambda: self.quick_filter("Risk Seviyesi", "Critical"))
         self.lbl_risk_dist.clicked.connect(self.select_risk_level_dialog) 
         
-        self.lbl_top_ip.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_ip, "IP Adresi"))
-        self.lbl_top_user.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_user, "Kullanıcı"))
-        self.lbl_top_event_id.clicked.connect(lambda: self.filter_by_label_text(self.lbl_top_event_id, "Event ID"))
+        self.top_ip_value = "-"
+        self.top_user_value = "-"
+        self.top_event_id_value = "-"
+
+        self.lbl_top_ip.clicked.connect(lambda: self.quick_filter("IP Adresi", self.top_ip_value))
+        self.lbl_top_user.clicked.connect(lambda: self.quick_filter("Kullanıcı", self.top_user_value))
+        self.lbl_top_event_id.clicked.connect(lambda: self.quick_filter("Event ID", self.top_event_id_value))
 
         font = QFont(); font.setBold(True); font.setPointSize(11)
         labels = [self.lbl_total, self.lbl_critical, self.lbl_risk_dist, self.lbl_top_ip, self.lbl_top_user, self.lbl_top_event_id]
@@ -891,6 +945,20 @@ class MainWindow(QMainWindow):
         self.seen_logs_deque = deque(maxlen=10000)
         self.seen_logs_set = set()
 
+        self.dashboard_stats = {
+            "total": 0,
+            "risk": {
+                "Low": 0,
+                "Medium": 0,
+                "High": 0,
+                "Critical": 0,
+                "Fatal": 0
+            },
+            "ips": {},
+            "users": {},
+            "events": {}
+        }
+
 
         # 🚀 1. GÜVENLİ DOSYA YOLU MİMARİSİ (Çalışma dizini bağımlılığını koparır)
         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -933,16 +1001,45 @@ class MainWindow(QMainWindow):
         self.filter_input.setText(value)
         self.apply_filter()
 
-    # 🚀 YENİ HALİ: prefix_text ve re modülü uçuruldu!
-    def filter_by_label_text(self, label, column_name):
-        raw_text = label.text()
-        
-        if ":" in raw_text:
-            # Sadece ":" sonrasını al ve sondaki "</span>" etiketini silip boşlukları temizle
-            val = raw_text.split(":", 1)[1].replace("</span>", "").strip()
-            
-            if val and val != "-": 
-                self.quick_filter(column_name, val)
+    def reset_dashboard_stats(self):
+        self.dashboard_stats = {
+            "total": 0,
+            "risk": {
+                "Low": 0,
+                "Medium": 0,
+                "High": 0,
+                "Critical": 0,
+                "Fatal": 0
+            },
+            "ips": {},
+            "users": {},
+            "events": {}
+        }
+        self.update_dashboard()  
+
+    def register_dashboard_stat(self, event_id, user, ip, risk_level):
+        stats = self.dashboard_stats
+
+        stats["total"] += 1
+
+        # Risk
+        risk_name = risk_level.replace("🟢 ", "").replace("🟡 ", "").replace("🟠 ", "").replace("🔴 ", "").replace("☠️ ", "").strip()
+
+        if risk_name in stats["risk"]:
+            stats["risk"][risk_name] += 1
+
+        # IP
+        if ip and ip != "-":
+            stats["ips"][ip] = stats["ips"].get(ip, 0) + 1
+
+        # Kullanıcı
+        if user and user != "-":
+            stats["users"][user] = stats["users"].get(user, 0) + 1
+
+        # Event ID
+        event_id = str(event_id).strip()
+        if event_id and event_id != "-":
+            stats["events"][event_id] = stats["events"].get(event_id, 0) + 1      
 
     def select_risk_level_dialog(self):
         risk_seviyeleri = ["Low", "Medium", "High", "Critical", "Fatal"]
@@ -950,55 +1047,79 @@ class MainWindow(QMainWindow):
         if ok and secim: self.quick_filter("Risk Seviyesi", secim)
 
     def update_dashboard(self):
-        row_count = self.log_table.rowCount()
-        
-        # 🚀 HATA DÜZELTMESİ: Tablo boşsa veya yeni dosya 0 kayıtla geldiyse dashboard eski verilerde kalmasın, sıfırlansın!
-        if row_count == 0:
-            if hasattr(self, 'lbl_total'): self.lbl_total.setText("Toplam Olay: 0")
-            if hasattr(self, 'lbl_critical'): self.lbl_critical.setText("🔴 Kritik Olay: 0")
-            if hasattr(self, 'lbl_risk_dist'): self.lbl_risk_dist.setText("📊 Risk Dağılımı: 🟢 Low | 🟡 Medium | 🟠 High | 🔴 Critical | ☠️ Fatal")
-            if hasattr(self, 'lbl_top_ip'): self.lbl_top_ip.setText("🌐 En Aktif IP: -")
-            if hasattr(self, 'lbl_top_user'): self.lbl_top_user.setText("👤 En Aktif Kullanıcı: -")
-            if hasattr(self, 'lbl_top_event_id'): self.lbl_top_event_id.setText("🆔 En Sık Event ID: -")
+        stats = self.dashboard_stats
+
+        total = stats["total"]
+
+        if total == 0:
+            self.lbl_total.setText("Toplam Olay: 0")
+            self.lbl_critical.setText("🔴 Kritik Olay: 0")
+            self.lbl_risk_dist.setText(
+                "📊 Risk Dağılımı: 🟢 Low: 0 | 🟡 Medium: 0 | "
+                "🟠 High: 0 | 🔴 Critical: 0 | ☠️ Fatal: 0"
+            )
+            self.lbl_top_ip.setText("🌐 En Aktif IP: -")
+            self.lbl_top_user.setText("👤 En Aktif Kullanıcı: -")
+            self.lbl_top_event_id.setText("🆔 En Sık Event ID: -")
             return
-            
-        risk_sayilari = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0, "FATAL": 0}
-        ip_sayilari, user_sayilari, event_sayilari = {}, {}, {}
-        
-        # 🎯 Sadece ekranda görünen satırların sayısını tutacağımız değişken
-        gorunur_satir_sayisi = 0
 
-        for row in range(row_count):
-            if self.log_table.isRowHidden(row): continue
-            
-            # Gizli değilse görünür satır sayısını 1 artır
-            gorunur_satir_sayisi += 1
-            
-            event_id = self.log_table.item(row, 2).text() if self.log_table.item(row, 2) else ""
-            user = self.log_table.item(row, 3).text() if self.log_table.item(row, 3) else ""
-            ip = self.log_table.item(row, 4).text() if self.log_table.item(row, 4) else ""
-            risk = self.log_table.item(row, 6).text() if self.log_table.item(row, 6) else ""
-            
-            if "Low" in risk: risk_sayilari["Low"] += 1
-            elif "Medium" in risk: risk_sayilari["Medium"] += 1
-            elif "High" in risk: risk_sayilari["High"] += 1
-            elif "Critical" in risk: risk_sayilari["Critical"] += 1; 
-            elif "FATAL" in risk or "Fatal" in risk: risk_sayilari["FATAL"] += 1; 
-                
-            if ip and ip != "-": ip_sayilari[ip] = ip_sayilari.get(ip, 0) + 1
-            if user and user != "-": user_sayilari[user] = user_sayilari.get(user, 0) + 1
-            if event_id and event_id != "-": event_sayilari[event_id] = event_sayilari.get(event_id, 0) + 1
-            
-        en_aktif_ip = max(ip_sayilari, key=ip_sayilari.get) if ip_sayilari else "-"
-        en_aktif_user = max(user_sayilari, key=user_sayilari.get) if user_sayilari else "-"
-        en_sik_event = max(event_sayilari, key=event_sayilari.get) if event_sayilari else "-"
+        risk = stats["risk"]
 
-        self.lbl_total.setText(f'<span style="color: #66b3ff;">Toplam Olay: {gorunur_satir_sayisi}</span>')
-        self.lbl_top_ip.setText(f'<span style="color: #66b3ff;">🌐 En Aktif IP: {en_aktif_ip}</span>')
-        self.lbl_critical.setText(f'<span style="color: #ff6666;">🔴 Kritik Olay: {risk_sayilari["Critical"] + risk_sayilari["FATAL"]}</span>')
-        self.lbl_top_user.setText(f'<span style="color: #ffb74d;">👤 En Aktif Kullanıcı: {en_aktif_user}</span>')
-        self.lbl_risk_dist.setText(f'📊 Risk Dağılımı: 🟢 Low: {risk_sayilari["Low"]} | 🟡 Medium: {risk_sayilari["Medium"]} | 🟠 High: {risk_sayilari["High"]} | 🔴 Critical: {risk_sayilari["Critical"]} | ☠️ Fatal: {risk_sayilari["FATAL"]}')
-        self.lbl_top_event_id.setText(f'<span style="color: #b366ff;">🆔 En Sık Event ID: {en_sik_event.split(" ")[0]}</span>')
+        en_aktif_ip = (
+            max(stats["ips"], key=stats["ips"].get)
+            if stats["ips"] else "-"
+        )
+
+        en_aktif_user = (
+            max(stats["users"], key=stats["users"].get)
+            if stats["users"] else "-"
+        )
+
+        en_sik_event = (
+            max(stats["events"], key=stats["events"].get)
+            if stats["events"] else "-"
+        )
+
+        self.top_ip_value = en_aktif_ip
+        self.top_user_value = en_aktif_user
+        self.top_event_id_value = str(en_sik_event).split(" ")[0] if en_sik_event != "-" else "-"
+
+        self.lbl_total.setText(
+            f'<span style="color: #66b3ff;">Toplam Olay: {total}</span>'
+        )
+
+        self.lbl_critical.setText(
+            f'<span style="color: #ff6666;">'
+            f'🔴 Kritik Olay: {risk["Critical"] + risk["Fatal"]}'
+            f'</span>'
+        )
+
+        self.lbl_risk_dist.setText(
+            f'📊 Risk Dağılımı: '
+            f'🟢 Low: {risk["Low"]} | '
+            f'🟡 Medium: {risk["Medium"]} | '
+            f'🟠 High: {risk["High"]} | '
+            f'🔴 Critical: {risk["Critical"]} | '
+            f'☠️ Fatal: {risk["Fatal"]}'
+        )
+
+        self.lbl_top_ip.setText(
+            f'<span style="color: #66b3ff;">'
+            f'🌐 En Aktif IP: {en_aktif_ip}'
+            f'</span>'
+        )
+
+        self.lbl_top_user.setText(
+            f'<span style="color: #ffb74d;">'
+            f'👤 En Aktif Kullanıcı: {en_aktif_user}'
+            f'</span>'
+        )
+
+        self.lbl_top_event_id.setText(
+            f'<span style="color: #b366ff;">'
+            f'🆔 En Sık Event ID: {en_sik_event}'
+            f'</span>'
+        )
 
     def manual_block_from_table(self, row, column):
         # Sadece IP Adresi sütununa (4. sütun) tıklandıysa çalışır
@@ -1056,7 +1177,6 @@ class MainWindow(QMainWindow):
             self.timer.stop()
         if hasattr(self, 'live_worker') and self.live_worker.isRunning():
             self.live_worker.requestInterruption()
-            self.live_worker.wait()
 
         if hasattr(self, 'security_timer') and self.security_timer.isActive():
             self.security_timer.stop()
@@ -1073,8 +1193,12 @@ class MainWindow(QMainWindow):
         if file_path:
             if hasattr(self, 'log_table'):
                 self.log_table.setRowCount(0)
-            if hasattr(self, 'seen_logs_set'):
-                self.seen_logs_set.clear()
+
+            self.seen_logs_deque.clear()
+            self.seen_logs_set.clear()
+            self.reset_dashboard_stats()
+            self.failed_attempts = {}
+            self.current_fatal_alerts = []
             self.current_file = file_path
             
             if file_path.lower().endswith(".csv"):
@@ -1088,16 +1212,33 @@ class MainWindow(QMainWindow):
                 )
                 
                 if cevap == QMessageBox.StandardButton.Yes:
+                    self.notifications_enabled = True
+                    self.status_queue.clear()
+
                     self.file_read_position = 0
                     self.start_live_timer()
                     self.run_live_file_update()
                     return
                 else:
-                    # 🚀 SADECE STATİK CSV İÇİN
-                    self.process_file(file_path=file_path, show_popup=True, scan_mode="csv")
+                    # STATİK CSV ANALİZİ
+                    self.notifications_enabled = False
+                    self.status_queue.clear()
+
+                    self.process_file(
+                        file_path=file_path,
+                        show_popup=True,
+                        scan_mode="csv"
+                    )
             else:
-                # 🚀 EVTX DOSYALARI İÇİN (scan_mode="file" veya "gecmis_evtx")
-                self.process_file(file_path=file_path, show_popup=True, scan_mode="file")
+                # STATİK EVTX ANALİZİ
+                self.notifications_enabled = False
+                self.status_queue.clear()
+
+                self.process_file(
+                    file_path=file_path,
+                    show_popup=True,
+                    scan_mode="file"
+                )
 
     def process_file(self, file_path, show_popup=False, scan_mode="gecmis_evtx"):
 
@@ -1174,9 +1315,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'btn_load_log'):
             self.btn_load_log.setEnabled(True)
 
-        # 🚀 İşçi işini bitirdiği an, en son kaldığı EventRecordID değerini ana pencereye alıyoruz:
-        if hasattr(self, 'worker') and hasattr(self.worker, 'last_seen_record_id'):
-            self.last_seen_record_id = self.worker.last_seen_record_id
+        if scan_mode == "live_security":
+            if hasattr(self, 'worker') and hasattr(self.worker, 'last_seen_record_id'):
+                self.last_seen_record_id = self.worker.last_seen_record_id
             
         # 🚀 PERFORMANS İYİLEŞTİRMESİ VE BUTON DÜZELTMESİ: 
         # Sadece geçmiş taramalarda butonu sıfırla ve tabloyu boyutlandır. Canlı modda bunlara dokunma!
@@ -1211,8 +1352,10 @@ class MainWindow(QMainWindow):
 
     def on_analysis_error(self, err_msg):
         # 🚀 Hata durumunda canlı izleme (timer) aktifse mutlaka durdurmalıyız
-        if hasattr(self, 'timer') and self.timer.isActive():
-            self.timer.stop()
+        if hasattr(self, 'security_timer') and self.security_timer.isActive():
+            self.security_timer.stop()
+            self.is_security_live_active = False
+            
             if hasattr(self, 'btn_live'):
                 self.btn_live.setText("▶ Canlı İzlemeyi Başlat (Live Sync)")
                 self.btn_live.setStyleSheet("")
@@ -1327,9 +1470,9 @@ class MainWindow(QMainWindow):
                         match = True
                         
             self.log_table.setRowHidden(row, not match)
+
+        self.update_dashboard()    
             
-        # Filtreleme döngüsü bittiği anda dashboard'u dinamik olarak güncelle
-        self.update_dashboard()
 
     def clear_filter(self):
         # Filtre inputlarını temizle
@@ -1341,10 +1484,9 @@ class MainWindow(QMainWindow):
         # Tablodaki tüm gizlenmiş satırları yeniden görünür yap
         for row in range(self.log_table.rowCount()):
             self.log_table.setRowHidden(row, False)
+
+        self.update_dashboard()    
             
-        # 🚀 KRİTİK DÜZELTME: Tablo sıfırlandığı an dashboard istatistiklerini de tüm verilere göre güncelle!
-        if hasattr(self, 'update_dashboard'):
-            self.update_dashboard()
 
     def on_firewall_success(self, ip):
         if hasattr(self, 'session_blocked_ips'):
@@ -1362,21 +1504,6 @@ class MainWindow(QMainWindow):
     def on_firewall_error(self, ip_address, error_msg):
         print(f"[!] Hata: {ip_address} engellenemedi. Detay: {error_msg}")
 
-        
-    def process_status_queue(self):
-        # Eğer kuyrukta gösterilecek mesaj varsa:
-        if hasattr(self, 'status_queue') and self.status_queue:
-            self.is_status_queue_running = True
-            mesaj = self.status_queue.pop(0) # İlk sıradaki mesajı al ve kuyruktan çıkar
-            
-            if hasattr(self, 'statusBar'):
-                self.statusBar().showMessage(mesaj, 2000) # Mesajı 2 saniye (2000 ms) göster
-                
-            # 2 saniye sonra bu fonksiyonu tekrar çalıştırıp sıradaki mesaja geç (Programı dondurmaz!)
-            QTimer.singleShot(2000, self.process_status_queue)
-        else:
-            # Kuyruk bittiyse sistemi bekleme moduna al
-            self.is_status_queue_running = False
 
     def show_blocked_ips_manager(self):
         modlar = [
@@ -1483,12 +1610,21 @@ class MainWindow(QMainWindow):
         # 3. MOD: İŞLEM GEÇMİŞİ (AUDIT LOG)
         elif "📜 İşlem" in secilen_mod:
             try:
-                if not os.path.exists("denetim_kaydi.txt"):
+                # 🚀 DÜZELTME: Mutlak dosya yolu tanımlandı
+                BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+                audit_path = os.path.join(BASE_DIR, "denetim_kaydi.txt")
+
+                # "denetim_kaydi.txt" yerine audit_path kullanıldı
+                if not os.path.exists(audit_path):
                     QMessageBox.information(self, "İşlem Geçmişi", "Henüz kaydedilmiş bir engel kaldırma işlemi yok.")
                     return
                     
-                with open("denetim_kaydi.txt", "r", encoding="utf-8") as f:
-                    gecmis = f.read().strip()
+                # "denetim_kaydi.txt" yerine audit_path kullanıldı
+                with open(audit_path, "r", encoding="utf-8") as f:
+                    satirlar = [satir.strip() for satir in f if satir.strip()]
+
+                satirlar.reverse()
+                gecmis = "\n".join(satirlar)
                     
                 if not gecmis:
                     QMessageBox.information(self, "İşlem Geçmişi", "Geçmiş kaydı boş.")
@@ -1496,7 +1632,7 @@ class MainWindow(QMainWindow):
                     
                 msg = QMessageBox(self)
                 msg.setWindowTitle("📜 İşlem Geçmişi")
-                msg.setText("Sistemden engeli kaldırılan IP adresleri geçmişte kayıtlıdır.\nKayıtları görmek için 'Show Details...' (Ayrıntıları Göster) butonuna tıklayın.")
+                msg.setText("Sistemdeki işlemler geçmişte kayıtlıdır.\nKayıtları görmek için 'Show Details...' (Ayrıntıları Göster) butonuna tıklayın.")
                 msg.setDetailedText(gecmis)
                 msg.exec()
                 
