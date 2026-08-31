@@ -115,3 +115,144 @@
 [2026-08-30 15:31:48] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
 [2026-08-30 15:32:28] Windows Security canlı izleme modu başlatıldı.
 [2026-08-30 15:33:41] Windows Security canlı izleme modu başlatıldı.
+[2026-08-30 15:53:13] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-30 15:53:13] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-30 15:53:29] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:11:10] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:13:52] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:13:52] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:14:30] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:15:39] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:15:44] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:15:44] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:17:35] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:17:35] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:18:57] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:18:57] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:20:52] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:22:02] Windows Security canlı izleme durduruldu.
+[2026-08-31 09:22:04] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:22:18] Windows Security canlı izleme durduruldu.
+[2026-08-31 09:22:20] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:22:22] Windows Security canlı izleme durduruldu.
+[2026-08-31 09:23:18] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:23:31] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:23:31] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:24:33] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:25:08] Windows Security canlı izleme durduruldu.
+[2026-08-31 09:30:07] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:51:50] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 09:51:54] Windows Security canlı izleme durduruldu.
+[2026-08-31 09:51:57] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 09:51:57] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:18:09] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:18:25] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:18:26] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 11:18:29] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 3 evtx.evtx | SHA256=45d0ccf3a8876d12dd189dead74e3dd034c7f92e68435cc0e55ef2ea234f22d9
+[2026-08-31 11:21:01] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:21:10] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:24:14] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:24:19] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:24:20] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 11:25:51] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:25:54] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:25:55] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 11:25:56] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:30:15] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:30:18] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:30:19] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 11:30:19] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:30:19] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:30:25] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:30:31] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:31:29] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:31:30] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:31:30] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:31:34] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:31:34] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 11:31:38] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:32:04] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:32:09] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:32:10] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:32:10] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:33:20] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:33:22] Windows Security canlı izleme durduruldu.
+[2026-08-31 11:35:16] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:35:33] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:35:33] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:35:33] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:35:37] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:35:38] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 11:38:41] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:38:42] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:38:42] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:39:19] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 4 evtx.evtx | SHA256=77bce07798e5b087c424246ff777feee5e9258fd9645230b70f0f73b4ffe8af2
+[2026-08-31 11:39:42] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 4 evtx.evtx | Toplam=6929
+[2026-08-31 11:39:45] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 2 evtx.evtx | SHA256=8d4790e35208ade885ad7aa7f73ceef3b25add3159d1573a397f9b198c0cc0ca
+[2026-08-31 11:39:47] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 2 evtx.evtx | Toplam=516
+[2026-08-31 11:39:49] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 4 evtx.evtx | SHA256=77bce07798e5b087c424246ff777feee5e9258fd9645230b70f0f73b4ffe8af2
+[2026-08-31 11:39:52] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 4 evtx.evtx | Toplam=951
+[2026-08-31 11:39:53] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:45:20] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:45:21] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:45:21] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:46:21] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:47:31] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:47:32] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:47:32] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:47:55] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:50:24] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 11:51:02] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:51:03] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:51:03] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 11:51:06] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 11:51:06] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 11:51:11] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 4 evtx.evtx | SHA256=77bce07798e5b087c424246ff777feee5e9258fd9645230b70f0f73b4ffe8af2
+[2026-08-31 11:51:29] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 4 evtx.evtx | Toplam=5239
+[2026-08-31 11:51:31] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 3 evtx.evtx | SHA256=45d0ccf3a8876d12dd189dead74e3dd034c7f92e68435cc0e55ef2ea234f22d9
+[2026-08-31 11:51:37] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 3 evtx.evtx | Toplam=1680
+[2026-08-31 11:53:20] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 3 evtx.evtx | SHA256=45d0ccf3a8876d12dd189dead74e3dd034c7f92e68435cc0e55ef2ea234f22d9
+[2026-08-31 11:53:48] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 3 evtx.evtx | Toplam=6966
+[2026-08-31 11:54:45] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 3 evtx.evtx | SHA256=45d0ccf3a8876d12dd189dead74e3dd034c7f92e68435cc0e55ef2ea234f22d9
+[2026-08-31 11:56:16] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 3 evtx.evtx | Toplam=18359
+[2026-08-31 11:57:26] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 2 evtx.evtx | SHA256=8d4790e35208ade885ad7aa7f73ceef3b25add3159d1573a397f9b198c0cc0ca
+[2026-08-31 11:58:04] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 2 evtx.evtx | Toplam=9772
+[2026-08-31 12:48:36] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 12:48:52] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 12:48:54] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 12:48:54] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 12:48:54] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 12:50:44] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 12:50:45] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 12:50:45] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 12:50:45] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 12:50:55] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 12:51:00] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 2 evtx.evtx | SHA256=8d4790e35208ade885ad7aa7f73ceef3b25add3159d1573a397f9b198c0cc0ca
+[2026-08-31 12:52:36] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 12:53:12] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 12:53:13] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 12:53:13] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 12:53:22] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 12:53:22] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 12:53:30] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 12:53:41] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 3 evtx.evtx | SHA256=45d0ccf3a8876d12dd189dead74e3dd034c7f92e68435cc0e55ef2ea234f22d9
+[2026-08-31 12:54:10] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 3 evtx.evtx | Toplam=7517
+[2026-08-31 13:05:02] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 3 evtx.evtx | SHA256=45d0ccf3a8876d12dd189dead74e3dd034c7f92e68435cc0e55ef2ea234f22d9
+[2026-08-31 13:05:17] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 3 evtx.evtx | Toplam=4002
+[2026-08-31 13:05:24] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 13:05:52] Windows Security canlı izleme durduruldu.
+[2026-08-31 13:05:58] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 13:05:59] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 13:05:59] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 13:06:01] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 13:06:04] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 13:06:14] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 13:06:24] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 13:06:25] OTOMATİK KONTROL: 185.15.15.15 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 13:06:25] OTOMATİK KONTROL: 45.33.32.156 adresi zaten güvenlik duvarında engelliydi.
+[2026-08-31 13:06:30] Windows Security canlı izleme modu başlatıldı.
+[2026-08-31 13:06:33] Windows Security canlı izleme durduruldu.
+[2026-08-31 13:06:35] ANALİZ BAŞLATILDI | Dosya=test_logs.csv | SHA256=6490bf26a9ea095fe5a5fe04bc0d6f370beaf9e3852a5e582f2ea3f48ccef3dc
+[2026-08-31 13:06:36] ANALİZ TAMAMLANDI | Dosya=test_logs.csv | Toplam=20
+[2026-08-31 13:06:41] ANALİZ BAŞLATILDI | Dosya=olay dosyaları 3 evtx.evtx | SHA256=45d0ccf3a8876d12dd189dead74e3dd034c7f92e68435cc0e55ef2ea234f22d9
+[2026-08-31 13:07:00] ANALİZ TAMAMLANDI | Dosya=olay dosyaları 3 evtx.evtx | Toplam=4805
